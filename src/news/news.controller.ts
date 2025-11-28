@@ -45,8 +45,13 @@ export class NewsController {
   }
 
   @Post('batch/active-news-summary')
-  getActiveNewsSummaryBatch(@Body() body: { loanIds: string[] }) {
-    return this.newsService.getActiveNewsSummaryBatch(body.loanIds);
+  getNewsSummaryBatch(@Body() body: { loanIds: string[] }) {
+    return this.newsService.getNewsSummaryBatch(body.loanIds);
+  }
+
+  @Get('loan/:loanId/all')
+  getAllLoanNews(@Param('loanId') loanId: string) {
+    return this.newsService.getAllLoanNews(loanId);
   }
 
   @Get(':id')

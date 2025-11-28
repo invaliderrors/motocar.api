@@ -825,42 +825,66 @@ export class NewsService {
   }
 
   /**
-   * Get active news summary for multiple loans in a single query
-   * Returns a map of loanId -> { activeNewsCount, totalInstallmentsExcluded }
+   * Get news summary for multiple loans in a single query
+   * Returns a map of loanId -> { totalNewsCount, activeNewsCount, totalInstallmentsExcluded }
    */
-  async getActiveNewsSummaryBatch(loanIds: string[]): Promise<Record<string, { activeNewsCount: number; totalInstallmentsExcluded: number }>> {
+  async getNewsSummaryBatch(loanIds: string[]): Promise<Record<string, { totalNewsCount: number; activeNewsCount: number; totalInstallmentsExcluded: number }>> {
     if (!loanIds || loanIds.length === 0) {
       return {};
     }
 
-    // Get all active news for the given loan IDs
-    const activeNews = await this.prisma.news.findMany({
+    // Get all news for the given loan IDs
+    const allNews = await this.prisma.news.findMany({
       where: {
         loanId: { in: loanIds },
-        isActive: true,
       },
       select: {
         loanId: true,
+        isActive: true,
+        endDate: true,
         installmentsToSubtract: true,
       },
     });
 
     // Group by loanId and calculate totals
-    const result: Record<string, { activeNewsCount: number; totalInstallmentsExcluded: number }> = {};
+    const result: Record<string, { totalNewsCount: number; activeNewsCount: number; totalInstallmentsExcluded: number }> = {};
 
     // Initialize all loanIds with zero values
     for (const loanId of loanIds) {
-      result[loanId] = { activeNewsCount: 0, totalInstallmentsExcluded: 0 };
+      result[loanId] = { totalNewsCount: 0, activeNewsCount: 0, totalInstallmentsExcluded: 0 };
     }
 
+    const now = new Date();
+
     // Aggregate the news data
-    for (const news of activeNews) {
+    for (const news of allNews) {
       if (news.loanId) {
-        result[news.loanId].activeNewsCount++;
-        result[news.loanId].totalInstallmentsExcluded += news.installmentsToSubtract || 0;
+        result[news.loanId].totalNewsCount++;
+        
+        // Check if news is currently active (isActive AND endDate is null or in future)
+        const isCurrentlyActive = news.isActive && (!news.endDate || new Date(news.endDate) >= now);
+        if (isCurrentlyActive) {
+          result[news.loanId].activeNewsCount++;
+          result[news.loanId].totalInstallmentsExcluded += news.installmentsToSubtract || 0;
+        }
       }
     }
 
     return result;
+  }
+
+  /**
+   * Get all news for a specific loan (both active and inactive)
+   */
+  async getAllLoanNews(loanId: string) {
+    return this.prisma.news.findMany({
+      where: {
+        loanId,
+      },
+      include: {
+        createdBy: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 }
