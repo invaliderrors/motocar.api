@@ -63,6 +63,15 @@ export class CreateInstallmentDto {
   storeId?: string;
 }
 
+export class CalculatePaymentCoverageDto {
+  @IsUUID()
+  loanId: string;
+
+  @IsNumber()
+  @Min(0)
+  amount: number;
+}
+
 export class FindInstallmentFiltersDto {
   @IsOptional()
   @IsDateString()

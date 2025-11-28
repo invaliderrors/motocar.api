@@ -4,9 +4,9 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { CreateInstallmentDto, FindInstallmentFiltersDto, UpdateInstallmentDto } from './installment.dto';
+import { CalculatePaymentCoverageDto, CreateInstallmentDto, FindInstallmentFiltersDto, UpdateInstallmentDto } from './installment.dto';
 import { toColombiaMidnightUtc, toColombiaEndOfDayUtc, toColombiaUtc } from 'src/lib/dates';
-import { addDays } from 'date-fns';
+import { addDays, differenceInDays, startOfDay } from 'date-fns';
 import { BaseStoreService } from 'src/lib/base-store.service';
 import { LoanStatus, Prisma } from 'src/prisma/generated/client';
 
@@ -14,6 +14,126 @@ import { LoanStatus, Prisma } from 'src/prisma/generated/client';
 export class InstallmentService extends BaseStoreService {
   constructor(protected readonly prisma: PrismaService) {
     super(prisma);
+  }
+
+  /**
+   * Calculate the last covered date for a loan based on payments made.
+   * This is the date up to which all payments have covered the daily rate.
+   */
+  private async getLastCoveredDate(loanId: string, loan: any): Promise<Date> {
+    // Get all existing payments for this loan
+    const existingPayments = await this.prisma.installment.findMany({
+      where: { loanId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const dailyRate = loan.installmentPaymentAmmount;
+    const loanStartDate = startOfDay(new Date(loan.startDate));
+
+    if (existingPayments.length === 0) {
+      // No payments yet, last covered date is the day before the loan started
+      return addDays(loanStartDate, -1);
+    }
+
+    // Calculate total days covered by all payments
+    let totalDaysCovered = 0;
+    for (const payment of existingPayments) {
+      const daysCovered = payment.amount / dailyRate;
+      totalDaysCovered += daysCovered;
+    }
+
+    // Last covered date is loan start date + total days covered - 1
+    // (because if you pay for 1 day starting from Nov 15, you cover Nov 15)
+    return addDays(loanStartDate, Math.floor(totalDaysCovered) - 1);
+  }
+
+  /**
+   * Calculate payment coverage information based on the amount paid.
+   * Returns the date range this payment covers and whether it's late.
+   */
+  private calculatePaymentCoverage(
+    paymentAmount: number,
+    dailyRate: number,
+    lastCoveredDate: Date,
+    paymentDate: Date,
+  ): {
+    daysCovered: number;
+    coverageStartDate: Date;
+    coverageEndDate: Date;
+    isLate: boolean;
+    latePaymentDate: Date | null;
+  } {
+    // Calculate how many days this payment covers
+    const daysCovered = paymentAmount / dailyRate;
+
+    // Coverage starts the day after the last covered date
+    const coverageStartDate = addDays(lastCoveredDate, 1);
+    
+    // Coverage ends after the days covered (fractional days round down for the end date)
+    const coverageEndDate = addDays(coverageStartDate, Math.floor(daysCovered) - 1);
+
+    // Payment is late if the coverage start date is before today
+    const today = startOfDay(new Date());
+    const isLate = coverageStartDate < today;
+
+    // If late, the latePaymentDate is the coverage start date (when it should have been paid)
+    const latePaymentDate = isLate ? coverageStartDate : null;
+
+    return {
+      daysCovered,
+      coverageStartDate,
+      coverageEndDate,
+      isLate,
+      latePaymentDate,
+    };
+  }
+
+  /**
+   * Public endpoint to calculate payment coverage before submitting.
+   * This helps the frontend show the user what dates their payment will cover.
+   */
+  async calculateCoverage(dto: CalculatePaymentCoverageDto) {
+    const loan = await this.prisma.loan.findUnique({
+      where: { id: dto.loanId },
+    });
+
+    if (!loan) throw new NotFoundException('Loan not found');
+
+    const dailyRate = loan.installmentPaymentAmmount;
+    const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
+    const today = startOfDay(new Date());
+
+    const coverage = this.calculatePaymentCoverage(
+      dto.amount,
+      dailyRate,
+      lastCoveredDate,
+      today,
+    );
+
+    // Calculate days behind/ahead
+    const daysFromLastCoveredToToday = differenceInDays(today, lastCoveredDate);
+    const daysBehind = Math.max(0, daysFromLastCoveredToToday - 1); // -1 because lastCoveredDate is already paid
+    
+    // Calculate amount needed to catch up to today
+    const amountNeededToCatchUp = daysBehind * dailyRate;
+
+    return {
+      loanId: dto.loanId,
+      dailyRate,
+      loanStartDate: loan.startDate,
+      lastCoveredDate,
+      paymentAmount: dto.amount,
+      daysCovered: coverage.daysCovered,
+      coverageStartDate: coverage.coverageStartDate,
+      coverageEndDate: coverage.coverageEndDate,
+      isLate: coverage.isLate,
+      latePaymentDate: coverage.latePaymentDate,
+      daysBehind,
+      amountNeededToCatchUp,
+      // Additional useful info
+      willBeCurrentAfterPayment: dto.amount >= amountNeededToCatchUp,
+      daysAheadAfterPayment: coverage.daysCovered - daysBehind,
+    };
   }
 
   async create(dto: CreateInstallmentDto, userStoreId: string | null) {
@@ -43,19 +163,49 @@ export class InstallmentService extends BaseStoreService {
       throw new BadRequestException('Payment amount exceeds remaining debt.');
     }
 
+    // Get the daily payment rate
+    const dailyRate = loan.installmentPaymentAmmount;
+    
+    // Get the last covered date for this loan
+    const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
+    
+    // Calculate payment coverage based on amount
+    const paymentDate = dto.paymentDate ? new Date(dto.paymentDate) : new Date();
+    const coverage = this.calculatePaymentCoverage(
+      dto.amount,
+      dailyRate,
+      lastCoveredDate,
+      paymentDate,
+    );
+
+    // Determine if late/advance: use automatic calculation if not explicitly provided
+    const isLate = dto.isLate !== undefined ? dto.isLate : coverage.isLate;
+    const latePaymentDate = dto.latePaymentDate 
+      ? toColombiaUtc(dto.latePaymentDate) 
+      : (coverage.latePaymentDate ? toColombiaUtc(coverage.latePaymentDate) : null);
+
+    // For advance payments, check if coverage end date is after today
+    const today = startOfDay(new Date());
+    const isAdvance = dto.isAdvance !== undefined 
+      ? dto.isAdvance 
+      : (coverage.coverageEndDate > today);
+    const advancePaymentDate = dto.advancePaymentDate 
+      ? toColombiaUtc(dto.advancePaymentDate) 
+      : (isAdvance ? toColombiaUtc(coverage.coverageEndDate) : null);
+
     const installment = await this.prisma.installment.create({
       data: {
         store: { connect: { id: storeId } },
         loan: { connect: { id: dto.loanId } },
         amount: dto.amount,
         gps: dto.gps,
-        paymentDate: dto.paymentDate ? toColombiaUtc(dto.paymentDate) : toColombiaUtc(new Date()), // Actual payment date from form, or now if not provided
-        latePaymentDate: dto.latePaymentDate ? toColombiaUtc(dto.latePaymentDate) : null, // Original due date (if late)
-        isAdvance: dto.isAdvance ?? false,
-        advancePaymentDate: dto.advancePaymentDate ? toColombiaUtc(dto.advancePaymentDate) : null, // Future due date (if advance)
+        paymentDate: toColombiaUtc(paymentDate),
+        latePaymentDate: latePaymentDate,
+        isAdvance: isAdvance,
+        advancePaymentDate: advancePaymentDate,
         notes: dto.notes,
         paymentMethod: dto.paymentMethod,
-        isLate: dto.isLate ?? false,
+        isLate: isLate,
         attachmentUrl: dto.attachmentUrl,
         createdAt: toColombiaUtc(new Date()),
         updatedAt: toColombiaUtc(new Date()),

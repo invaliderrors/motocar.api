@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { InstallmentService } from './installment.service';
-import { CreateInstallmentDto, FindInstallmentFiltersDto, UpdateInstallmentDto } from './installment.dto';
+import { CalculatePaymentCoverageDto, CreateInstallmentDto, FindInstallmentFiltersDto, UpdateInstallmentDto } from './installment.dto';
 import { LogAction, ActionType } from '../lib/decorators/log-action.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt.guard';
 import { StoreAccessGuard } from '../auth/guards/store-access.guard';
@@ -29,6 +29,12 @@ export class InstallmentController {
   @LogAction(ActionType.CREATE, 'Installment')
   create(@Body() dto: CreateInstallmentDto, @UserStoreId() userStoreId: string | null) {
     return this.service.create(dto, userStoreId);
+  }
+
+  @Post('calculate-coverage')
+  @Roles(UserRole.ADMIN, UserRole.EMPLOYEE)
+  calculateCoverage(@Body() dto: CalculatePaymentCoverageDto) {
+    return this.service.calculateCoverage(dto);
   }
 
   @Get()
