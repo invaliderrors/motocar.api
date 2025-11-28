@@ -416,6 +416,7 @@ export class NewsService {
 
   /**
    * Update a news item
+   * Handles status toggle (isActive) by restoring/subtracting installments from loan
    */
   async update(id: string, dto: UpdateNewsDto) {
     const existingNews = await this.prisma.news.findUnique({
@@ -425,6 +426,82 @@ export class NewsService {
 
     if (!existingNews) {
       throw new NotFoundException('News not found');
+    }
+
+    // Handle status toggle - restore or subtract installments when toggling isActive
+    if (dto.isActive !== undefined && dto.isActive !== existingNews.isActive) {
+      if (existingNews.autoCalculateInstallments && existingNews.daysUnavailable && existingNews.loanId) {
+        const result = await this.calculateInstallmentsAndAmount(
+          existingNews.loanId,
+          existingNews.daysUnavailable,
+        );
+
+        const loan = await this.prisma.loan.findUnique({
+          where: { id: existingNews.loanId },
+          select: { 
+            totalAmount: true, 
+            debtRemaining: true,
+            remainingInstallments: true,
+            installments: true,
+          },
+        });
+
+        if (loan) {
+          const installmentsChangeInt = Math.round(result.installments);
+          
+          if (dto.isActive === false) {
+            // Deactivating: RESTORE installments back to the loan
+            const newTotalAmount = loan.totalAmount + result.amount;
+            const newDebtRemaining = loan.debtRemaining + result.amount;
+            const newRemainingInstallments = loan.remainingInstallments + installmentsChangeInt;
+            const newTotalInstallments = loan.installments + installmentsChangeInt;
+            
+            await this.prisma.loan.update({
+              where: { id: existingNews.loanId },
+              data: { 
+                totalAmount: newTotalAmount,
+                debtRemaining: newDebtRemaining,
+                remainingInstallments: newRemainingInstallments,
+                installments: newTotalInstallments,
+              },
+            });
+          } else {
+            // Reactivating: SUBTRACT installments from the loan again
+            const newTotalAmount = loan.totalAmount - result.amount;
+            const newDebtRemaining = Math.max(0, loan.debtRemaining - result.amount);
+            const newRemainingInstallments = Math.max(0, loan.remainingInstallments - installmentsChangeInt);
+            const newTotalInstallments = Math.max(0, loan.installments - installmentsChangeInt);
+            
+            await this.prisma.loan.update({
+              where: { id: existingNews.loanId },
+              data: { 
+                totalAmount: newTotalAmount,
+                debtRemaining: newDebtRemaining,
+                remainingInstallments: newRemainingInstallments,
+                installments: newTotalInstallments,
+              },
+            });
+          }
+        }
+      }
+
+      // If just toggling status, update and return early
+      if (Object.keys(dto).length === 1 && dto.isActive !== undefined) {
+        return this.prisma.news.update({
+          where: { id },
+          data: { isActive: dto.isActive },
+          include: {
+            loan: {
+              include: {
+                user: true,
+                vehicle: true,
+              },
+            },
+            store: true,
+            createdBy: true,
+          },
+        });
+      }
     }
 
     // Calculate days unavailable from date range if not explicitly provided
