@@ -1,0 +1,719 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/prisma/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STORE MODEL - Multi-Store Support
+// ═══════════════════════════════════════════════════════════════════════════
+
+model Store {
+  id          String      @id @default(uuid())
+  name        String      @unique
+  code        String      @unique // Short code (e.g., "BOG-01", "MED-02")
+  nit         String      @unique // Colombian Tax ID (NIT - Número de Identificación Tributaria)
+  address     String
+  city        String
+  phone       String?
+  status      StoreStatus @default(ACTIVE)
+  
+  // WhatsApp Integration (Evolution API per store)
+  whatsappEnabled     Boolean @default(false)
+  whatsappApiUrl      String? // Evolution API base URL for this store
+  whatsappInstanceId  String? // Evolution API instance ID for this store
+  whatsappApiKey      String? // Evolution API key for this store
+  
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations - All core entities belong to a store
+  employees             Employee[]
+  providers             Provider[]
+  vehicles              Vehicle[]
+  loans                 Loan[]
+  users                 User[] // Clients
+  installments          Installment[]
+  cashRegisters         CashRegister[]
+  expenses              Expense[]
+  auditLogs             AuditLog[]
+  news                  News[]
+  cashDenominationCounts CashDenominationCount[]
+
+  @@index([status])
+  @@index([code])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CORE MODELS
+// ═══════════════════════════════════════════════════════════════════════════
+
+model Employee {
+  id           String     @id @default(uuid())
+  name         String
+  username     String     @unique
+  email        String?    @unique
+  phone        String?
+  passwordHash String
+  role         UserRole   @default(EMPLOYEE) // Changed from roles array to single role
+  
+  // Store association - NULL for ADMIN, REQUIRED for EMPLOYEE
+  store        Store?     @relation(fields: [storeId], references: [id])
+  storeId      String?
+  
+  permissions  Json?      // Fine-grained permissions (optional)
+  status       String     @default("ACTIVE")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  lastAccess   DateTime?
+  refreshToken String?
+
+  // Relaciones
+  expenses      Expense[]
+  installments  Installment[]
+  cashRegisters CashRegister[]
+  auditLogs     AuditLog[]
+  news          News[]
+
+  @@index([storeId])
+  @@index([role])
+  @@index([status])
+  @@map("owners") // Map to existing table to preserve data
+}
+
+model Provider {
+  id            String         @id @default(uuid())
+  name          String
+  
+  // Store association
+  store         Store          @relation(fields: [storeId], references: [id])
+  storeId       String
+  
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  vehicles      Vehicle[]
+  cashRegisters CashRegister[]
+  expenses      Expense[]
+
+  @@unique([name, storeId]) // Provider name unique per store
+  @@index([storeId])
+}
+
+model User {
+  id             String   @id @default(uuid())
+  
+  // Store association
+  store          Store    @relation(fields: [storeId], references: [id])
+  storeId        String
+  
+  name           String
+  identification String
+  idIssuedAt     String
+  age            Int
+  phone          String
+  address        String
+  city           String
+  refName        String
+  refID          String
+  refPhone       String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relaciones
+  loans Loan[]
+
+  @@unique([identification, storeId]) // ID unique per store
+  @@index([storeId])
+  @@index([storeId, identification])
+}
+
+model Vehicle {
+  id           String        @id @default(uuid())
+  
+  // Store association
+  store        Store         @relation(fields: [storeId], references: [id])
+  storeId      String
+  
+  provider     Provider      @relation(fields: [providerId], references: [id])
+  providerId   String
+  vehicleType  VehicleType   @default(MOTORCYCLE)
+  status       VehicleStatus @default(IN_CIRCULATION)
+  brand        String
+  model        String
+  plate        String        @unique
+  price        Float?
+  engine       String?
+  chassis      String?
+  color        String?
+  cc           Int?
+  gps          Float?
+  soatDueDate  DateTime?     // SOAT (insurance) expiration date
+  technomechDueDate DateTime? // Technomechanical inspection expiration date
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Relaciones
+  loans Loan[]
+
+  @@index([storeId])
+  @@index([storeId, status])
+  @@index([providerId])
+  @@index([soatDueDate])
+  @@index([technomechDueDate])
+}
+
+model Loan {
+  id                        String     @id @default(uuid())
+  
+  // Store association
+  store                     Store      @relation(fields: [storeId], references: [id])
+  storeId                   String
+  
+  user                      User       @relation(fields: [userId], references: [id])
+  userId                    String
+  contractNumber            String?
+  vehicle                   Vehicle    @relation(fields: [vehicleId], references: [id])
+  vehicleId                 String
+  totalAmount               Float
+  downPayment               Float
+  installments              Int
+  paidInstallments          Float      @default(0)
+  remainingInstallments     Float
+  totalPaid                 Float      @default(0.0)
+  debtRemaining             Float
+  interestRate              Float
+  interestType              String
+  paymentFrequency          String
+  installmentPaymentAmmount Float
+  gpsInstallmentPayment     Float
+  archived                  Boolean    @default(false)
+  createdAt                 DateTime   @default(now())
+  updatedAt                 DateTime   @updatedAt
+  startDate                 DateTime   @default(now())
+  endDate                   DateTime?
+  status                    LoanStatus @default(PENDING)
+
+  // Relaciones
+  payments Installment[]
+  news     News[]
+
+  @@index([storeId])
+  @@index([storeId, status])
+  @@index([storeId, archived])
+  @@index([userId])
+  @@index([vehicleId])
+}
+
+model Installment {
+  id                  String        @id @default(uuid())
+  
+  // Store association
+  store               Store         @relation(fields: [storeId], references: [id])
+  storeId             String
+  
+  loan                Loan          @relation(fields: [loanId], references: [id])
+  loanId              String
+  paymentMethod       PaymentMethod
+  amount              Float
+  gps                 Float
+  paymentDate         DateTime      @default(now())
+  isLate              Boolean       @default(false)
+  latePaymentDate     DateTime?
+  isAdvance           Boolean       @default(false)
+  advancePaymentDate  DateTime?
+  notes               String?       @db.Text()
+  attachmentUrl       String?
+  createdById         String?
+  archived            Boolean       @default(false)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  // Relaciones
+  createdBy      Employee?     @relation(fields: [createdById], references: [id])
+  cashRegister   CashRegister? @relation("CashRegisterPayments", fields: [cashRegisterId], references: [id])
+  cashRegisterId String?
+
+  @@index([storeId])
+  @@index([storeId, paymentDate])
+  @@index([loanId])
+}
+
+model CashRegister {
+  id                String   @id @default(uuid())
+  
+  // Store association
+  store             Store    @relation(fields: [storeId], references: [id])
+  storeId           String
+  
+  date              DateTime @default(now())
+  provider          Provider @relation(fields: [providerId], references: [id])
+  providerId        String
+  cashInRegister    Float
+  cashFromTransfers Float
+  cashFromCards     Float
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relaciones
+  payments         Installment[]        @relation("CashRegisterPayments")
+  expense          Expense[]
+  createdById      String?
+  createdBy        Employee?            @relation(fields: [createdById], references: [id])
+  denominationCount CashDenominationCount?
+
+  @@index([storeId])
+  @@index([storeId, date])
+  @@index([providerId])
+}
+
+model CashDenominationCount {
+  id              String       @id @default(uuid())
+  
+  // Store association
+  store           Store        @relation(fields: [storeId], references: [id])
+  storeId         String
+  
+  cashRegister    CashRegister @relation(fields: [cashRegisterId], references: [id])
+  cashRegisterId  String       @unique
+  
+  // Colombian peso denominations
+  bills_100000    Int          @default(0)
+  bills_50000     Int          @default(0)
+  bills_20000     Int          @default(0)
+  bills_10000     Int          @default(0)
+  bills_5000      Int          @default(0)
+  bills_2000      Int          @default(0)
+  bills_1000      Int          @default(0)
+  coins_500       Int          @default(0)
+  coins_200       Int          @default(0)
+  coins_100       Int          @default(0)
+  
+  // Calculated totals
+  totalCounted    Float        // Sum of all denominations
+  systemCash      Float        // Expected cash from system
+  difference      Float        // Difference between counted and system
+  
+  // Bank deposits
+  bankDeposit     Float        @default(0)
+  bankWithdrawal  Float        @default(0)
+  
+  notes           String?      @db.Text()
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([storeId])
+  @@index([cashRegisterId])
+}
+
+model Expense {
+  id             String          @id @default(uuid())
+  
+  // Store association
+  store          Store           @relation(fields: [storeId], references: [id])
+  storeId        String
+  
+  amount         Float
+  date           DateTime
+  provider       Provider?       @relation(fields: [providerId], references: [id])
+  providerId     String?
+  category       ExpenseCategory
+  paymentMethod  PaymentMethod
+  beneficiary    String
+  reference      String?
+  description    String
+  attachmentUrl  String?
+  cashRegister   CashRegister?   @relation(fields: [cashRegisterId], references: [id])
+  cashRegisterId String?
+  createdById    String?
+  createdBy      Employee?       @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([storeId])
+  @@index([storeId, date])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUDIT LOG - Track all sensitive actions
+// ═══════════════════════════════════════════════════════════════════════════
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  
+  // Store association - NULL for global admin actions
+  store       Store?      @relation(fields: [storeId], references: [id])
+  storeId     String?
+  
+  actor       Employee    @relation(fields: [actorId], references: [id])
+  actorId     String
+  actorRole   UserRole
+  
+  action      AuditAction
+  entity      String      // e.g., "Vehicle", "Loan", "User", "Store"
+  entityId    String
+  
+  oldValues   Json?       // Previous state
+  newValues   Json?       // New state
+  metadata    Json?       // Additional context (e.g., reason, affected entities)
+  
+  ipAddress   String?
+  userAgent   String?
+  
+  createdAt   DateTime    @default(now())
+  
+  @@index([storeId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([action])
+  @@index([entity, entityId])
+}
+
+/**
+ * ───────────────────────── Cash Flow Models ─────────────────────────
+ */
+
+model CashFlowAccount {
+  id              String                 @id @default(uuid())
+  name            String
+  accountType     CashFlowAccountType
+  currency        String                 @default("COP")
+  balance         Float                  @default(0)
+  isActive        Boolean                @default(true)
+  description     String?
+  metadata        Json?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  // Relations
+  transactions    CashFlowTransaction[]
+  transfersFrom   CashFlowTransfer[]     @relation("TransferFrom")
+  transfersTo     CashFlowTransfer[]     @relation("TransferTo")
+}
+
+model CashFlowTransaction {
+  id              String                    @id @default(uuid())
+  idempotencyKey  String                    @unique
+  account         CashFlowAccount           @relation(fields: [accountId], references: [id])
+  accountId       String
+  type            CashFlowTransactionType
+  category        CashFlowCategory
+  amount          Float
+  currency        String                    @default("COP")
+  date            DateTime
+  counterparty    String?
+  memo            String?
+  reference       String?
+  tags            String[]
+  attachmentUrls  String[]
+  metadata        Json?
+  isReconciled    Boolean                   @default(false)
+  reconciledAt    DateTime?
+  transferId      String?
+  createdById     String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  
+  @@index([accountId, date])
+  @@index([category, date])
+  @@index([counterparty])
+  @@index([date])
+}
+
+model CashFlowTransfer {
+  id              String                 @id @default(uuid())
+  idempotencyKey  String                 @unique
+  fromAccount     CashFlowAccount        @relation("TransferFrom", fields: [fromAccountId], references: [id])
+  fromAccountId   String
+  toAccount       CashFlowAccount        @relation("TransferTo", fields: [toAccountId], references: [id])
+  toAccountId     String
+  amount          Float
+  currency        String                 @default("COP")
+  date            DateTime
+  memo            String?
+  metadata        Json?
+  createdById     String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  // Relations - linked transaction IDs (stored as strings, not relations to avoid circular dependency)
+  debitTxId       String                 @unique
+  creditTxId      String                 @unique
+  
+  @@index([fromAccountId, date])
+  @@index([toAccountId, date])
+}
+
+model CashFlowRule {
+  id              String                 @id @default(uuid())
+  name            String
+  description     String?
+  priority        Int                    @default(0)
+  isActive        Boolean                @default(true)
+  
+  // Matching conditions
+  accountIds      String[]
+  counterpartyRegex String?
+  memoRegex       String?
+  amountMin       Float?
+  amountMax       Float?
+  categories      CashFlowCategory[]
+  
+  // Actions
+  targetCategory  CashFlowCategory?
+  targetCounterparty String?
+  addTags         String[]
+  
+  metadata        Json?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  
+  @@index([priority])
+}
+
+model CashFlowScheduledItem {
+  id              String                 @id @default(uuid())
+  name            String
+  type            CashFlowTransactionType
+  category        CashFlowCategory
+  accountId       String
+  amount          Float
+  currency        String                 @default("COP")
+  frequency       ScheduleFrequency
+  startDate       DateTime
+  endDate         DateTime?
+  nextOccurrence  DateTime
+  counterparty    String?
+  memo            String?
+  isActive        Boolean                @default(true)
+  metadata        Json?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  
+  @@index([nextOccurrence, isActive])
+  @@index([accountId])
+}
+
+model ExchangeRate {
+  id              String   @id @default(uuid())
+  fromCurrency    String
+  toCurrency      String
+  rate            Float
+  effectiveDate   DateTime
+  source          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@unique([fromCurrency, toCurrency, effectiveDate])
+  @@index([fromCurrency, toCurrency, effectiveDate])
+}
+
+/**
+ * ───────────────────────── Enums ─────────────────────────
+ */
+
+enum VehicleType {
+  MOTORCYCLE
+  CAR
+  TRUCK
+  VAN
+  ATV
+  OTHER
+}
+
+enum VehicleStatus {
+  IN_CIRCULATION
+  IN_WORKSHOP
+  SEIZED_BY_PROSECUTOR
+}
+
+enum ExpenseCategory {
+  RENT
+  SERVICES 
+  SALARIES 
+  TAXES 
+  MAINTENANCE
+  PURCHASES 
+  MARKETING 
+  TRANSPORT 
+  OTHER 
+}
+
+enum PaymentMethod {
+  CARD
+  CASH
+  TRANSACTION
+}
+
+enum LoanStatus {
+  PENDING                     // Pendiente
+  ACTIVE                      // Activo
+  COMPLETED                   // Finalizado (completado normalmente)
+  DEFAULTED                   // Incumplido
+  ARCHIVED                    // Archivado (mantener por compatibilidad)
+  ARCHIVED_BY_DEFAULT         // Archivado por mora (antiguo)
+  ARCHIVED_BY_THEFT           // Finalizado por robo (antiguo)
+  ARCHIVED_BY_PROSECUTOR      // Archivado por fiscalía (antiguo)
+  RESTARTED_BY_DEFAULT        // Reiniciado por mora
+  COMPLETED_BY_THEFT          // Finalizado por Robo de vehículo
+  COMPLETED_BY_PROSECUTOR     // Contrato finalizado por fiscalía
+  IMMOBILIZED_BY_TRAFFIC      // Inmovilizado por tránsito
+}
+
+enum Role {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MULTI-STORE ENUMS
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum StoreStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum UserRole {
+  ADMIN      // Global access, no store restriction
+  EMPLOYEE   // Restricted to assigned store
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  TRANSFER      // Cross-store transfer
+  REASSIGN      // Employee reassignment
+  LOGIN
+  LOGOUT
+  EXPORT
+  VIEW_SENSITIVE
+  ARCHIVE
+  RESTORE
+}
+
+enum CashFlowAccountType {
+  BANK
+  CASH
+  CREDIT_CARD
+  INVESTMENT
+  LOAN_RECEIVABLE
+  OTHER
+}
+
+enum CashFlowTransactionType {
+  INFLOW
+  OUTFLOW
+}
+
+enum CashFlowCategory {
+  // Operating Activities
+  CUSTOMER_PAYMENT
+  VENDOR_PAYMENT
+  SALARY_PAYMENT
+  RENT_PAYMENT
+  UTILITIES_PAYMENT
+  TAX_PAYMENT
+  INTEREST_PAYMENT
+  SERVICE_PAYMENT
+  
+  // Investing Activities
+  ASSET_PURCHASE
+  ASSET_SALE
+  INVESTMENT_PURCHASE
+  INVESTMENT_SALE
+  LOAN_DISBURSEMENT
+  LOAN_REPAYMENT_RECEIVED
+  
+  // Financing Activities
+  EQUITY_INJECTION
+  EQUITY_WITHDRAWAL
+  LOAN_RECEIVED
+  LOAN_REPAYMENT_MADE
+  DIVIDEND_PAYMENT
+  
+  // Other
+  TRANSFER
+  ADJUSTMENT
+  OTHER
+}
+
+enum ScheduleFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NEWS MODEL - Loan-specific and Store-wide announcements
+// ═══════════════════════════════════════════════════════════════════════════
+
+model News {
+  id          String       @id @default(uuid())
+  type        NewsType     // LOAN_SPECIFIC or STORE_WIDE
+  category    NewsCategory // WORKSHOP, MAINTENANCE, DAY_OFF, etc.
+  title       String
+  description String       @db.Text
+  notes       String?      @db.Text
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean      @default(true)
+  
+  // Auto-calculation fields (for workshop/maintenance scenarios)
+  autoCalculateInstallments Boolean @default(false)
+  daysUnavailable          Int?     // Number of days vehicle is unavailable
+  installmentsToSubtract   Int?     // Calculated or manually set installments to subtract
+  
+  // Vehicle type filter (for STORE_WIDE news)
+  vehicleType VehicleType? // If null, affects all vehicle types. If set, only affects specific type.
+  
+  // Relations
+  storeId     String
+  store       Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  loanId      String?      // Only for LOAN_SPECIFIC news
+  loan        Loan?        @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  
+  createdById String
+  createdBy   Employee     @relation(fields: [createdById], references: [id])
+  
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  @@index([storeId])
+  @@index([loanId])
+  @@index([type])
+  @@index([vehicleType])
+  @@index([category])
+  @@index([isActive])
+  @@index([startDate])
+  @@index([endDate])
+}
+
+enum NewsType {
+  LOAN_SPECIFIC
+  STORE_WIDE
+}
+
+enum NewsCategory {
+  WORKSHOP
+  MAINTENANCE
+  ACCIDENT
+  THEFT
+  DAY_OFF
+  HOLIDAY
+  SYSTEM_MAINTENANCE
+  OTHER
+}

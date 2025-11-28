@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Loan" ALTER COLUMN "paidInstallments" SET DEFAULT 0,
+ALTER COLUMN "paidInstallments" SET DATA TYPE DOUBLE PRECISION,
+ALTER COLUMN "remainingInstallments" SET DATA TYPE DOUBLE PRECISION;
