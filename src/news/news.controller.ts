@@ -44,6 +44,11 @@ export class NewsController {
     return this.newsService.getTotalInstallmentsToSubtract(loanId);
   }
 
+  @Post('batch/active-news-summary')
+  getActiveNewsSummaryBatch(@Body() body: { loanIds: string[] }) {
+    return this.newsService.getActiveNewsSummaryBatch(body.loanIds);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.newsService.findOne(id);

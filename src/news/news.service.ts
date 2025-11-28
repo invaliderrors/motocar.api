@@ -823,4 +823,44 @@ export class NewsService {
 
     return activeNews.reduce((sum, news) => sum + (news.installmentsToSubtract || 0), 0);
   }
+
+  /**
+   * Get active news summary for multiple loans in a single query
+   * Returns a map of loanId -> { activeNewsCount, totalInstallmentsExcluded }
+   */
+  async getActiveNewsSummaryBatch(loanIds: string[]): Promise<Record<string, { activeNewsCount: number; totalInstallmentsExcluded: number }>> {
+    if (!loanIds || loanIds.length === 0) {
+      return {};
+    }
+
+    // Get all active news for the given loan IDs
+    const activeNews = await this.prisma.news.findMany({
+      where: {
+        loanId: { in: loanIds },
+        isActive: true,
+      },
+      select: {
+        loanId: true,
+        installmentsToSubtract: true,
+      },
+    });
+
+    // Group by loanId and calculate totals
+    const result: Record<string, { activeNewsCount: number; totalInstallmentsExcluded: number }> = {};
+
+    // Initialize all loanIds with zero values
+    for (const loanId of loanIds) {
+      result[loanId] = { activeNewsCount: 0, totalInstallmentsExcluded: 0 };
+    }
+
+    // Aggregate the news data
+    for (const news of activeNews) {
+      if (news.loanId) {
+        result[news.loanId].activeNewsCount++;
+        result[news.loanId].totalInstallmentsExcluded += news.installmentsToSubtract || 0;
+      }
+    }
+
+    return result;
+  }
 }
