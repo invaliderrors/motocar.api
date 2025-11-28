@@ -679,6 +679,14 @@ model News {
   daysUnavailable          Int?     // Number of days vehicle is unavailable
   installmentsToSubtract   Int?     // Calculated or manually set installments to subtract
   
+  // Recurring date configuration (for STORE_WIDE news - e.g., store closed every 20th of the month)
+  isRecurring              Boolean  @default(false) // If true, this is a recurring closure
+  recurringDay             Int?     // Day of month (1-31), null if not recurring or if using specific dates
+  recurringMonths          Int[]    // Array of months (1-12), empty = all months. E.g., [1,6,12] = Jan, Jun, Dec
+  
+  // Specific dates to skip (for one-time closures or manually added dates)
+  skippedDates             DateTime[] // Array of specific dates when store is closed
+  
   // Vehicle type filter (for STORE_WIDE news)
   vehicleType VehicleType? // If null, affects all vehicle types. If set, only affects specific type.
   

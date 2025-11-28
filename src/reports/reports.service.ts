@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BaseStoreService } from '../lib/base-store.service';
+import { NewsService } from '../news/news.service';
 import * as ExcelJS from 'exceljs';
 import { stringify } from 'csv-stringify/sync';
 import * as puppeteer from 'puppeteer';
@@ -15,7 +16,10 @@ export interface ReportFilters {
 
 @Injectable()
 export class ReportsService extends BaseStoreService {
-  constructor(protected readonly prisma: PrismaService) {
+  constructor(
+    protected readonly prisma: PrismaService,
+    private readonly newsService: NewsService,
+  ) {
     super(prisma);
   }
 
@@ -360,6 +364,16 @@ export class ReportsService extends BaseStoreService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // Fetch skipped dates for all loans in batch
+    const loanIds = loans.map(loan => loan.id);
+    let skippedDatesByLoan: Record<string, Date[]> = {};
+    try {
+      skippedDatesByLoan = await this.newsService.getSkippedDatesBatch(loanIds);
+    } catch (error) {
+      console.error('Error fetching skipped dates for missing installments report:', error);
+      // Continue without skipped dates if there's an error
+    }
+
     const clientsWithMissingPayments: Array<{
       userId: string;
       userName: string;
@@ -376,6 +390,7 @@ export class ReportsService extends BaseStoreService {
       lastPaymentWasLate: boolean;
       daysSinceLastPayment: number;
       missedInstallments: number;
+      skippedDates: number;
       installmentAmount: number;
       gpsAmount: number;
       totalMissedAmount: number;
@@ -388,6 +403,18 @@ export class ReportsService extends BaseStoreService {
     for (const loan of loans) {
       const lastPayment = loan.payments[0];
       
+      // Get skipped dates for this loan
+      const loanSkippedDates = skippedDatesByLoan[loan.id] || [];
+      
+      // Helper to count skipped dates in a date range
+      const countSkippedDatesInRange = (startDate: Date, endDate: Date): number => {
+        return loanSkippedDates.filter(skippedDate => {
+          const date = new Date(skippedDate);
+          date.setHours(0, 0, 0, 0);
+          return date >= startDate && date <= endDate;
+        }).length;
+      };
+      
       if (!lastPayment) {
         // No payments yet - calculate days since loan start
         const loanStartDate = new Date(loan.startDate);
@@ -399,9 +426,14 @@ export class ReportsService extends BaseStoreService {
         const paymentFrequencyDays = this.getPaymentFrequencyDays(loan.paymentFrequency);
         const expectedInstallments = Math.floor(daysSinceStart / paymentFrequencyDays);
         
-        if (expectedInstallments > 0) {
-          const missedInstallments = expectedInstallments;
-          const missedAmount = missedInstallments * Number(loan.installmentPaymentAmmount);
+        // Count skipped dates in this period
+        const skippedDatesInPeriod = countSkippedDatesInRange(loanStartDate, today);
+        
+        // Adjust missed installments by subtracting skipped dates
+        const adjustedMissedInstallments = Math.max(0, expectedInstallments - skippedDatesInPeriod);
+        
+        if (adjustedMissedInstallments > 0) {
+          const missedAmount = adjustedMissedInstallments * Number(loan.installmentPaymentAmmount);
           
           clientsWithMissingPayments.push({
             userId: loan.user.id,
@@ -418,10 +450,11 @@ export class ReportsService extends BaseStoreService {
             lastPaymentDate: null,
             lastPaymentWasLate: false,
             daysSinceLastPayment: daysSinceStart,
-            missedInstallments,
+            missedInstallments: adjustedMissedInstallments,
+            skippedDates: skippedDatesInPeriod,
             installmentAmount: Number(loan.installmentPaymentAmmount),
             gpsAmount: Number(loan.gpsInstallmentPayment),
-            totalMissedAmount: missedAmount + (missedInstallments * Number(loan.gpsInstallmentPayment)),
+            totalMissedAmount: missedAmount + (adjustedMissedInstallments * Number(loan.gpsInstallmentPayment)),
             totalInstallments: loan.installments,
             paidInstallments: 0,
             loanStatus: loan.status,
@@ -442,10 +475,15 @@ export class ReportsService extends BaseStoreService {
         const paymentFrequencyDays = this.getPaymentFrequencyDays(loan.paymentFrequency);
         const expectedPaymentsSinceLastPayment = Math.floor(daysSinceLastPayment / paymentFrequencyDays);
         
-        // Check if there are missing payments
-        if (expectedPaymentsSinceLastPayment > 0) {
-          const missedInstallments = expectedPaymentsSinceLastPayment;
-          const missedAmount = missedInstallments * Number(loan.installmentPaymentAmmount);
+        // Count skipped dates in this period
+        const skippedDatesInPeriod = countSkippedDatesInRange(relevantDate, today);
+        
+        // Adjust missed installments by subtracting skipped dates
+        const adjustedMissedInstallments = Math.max(0, expectedPaymentsSinceLastPayment - skippedDatesInPeriod);
+        
+        // Check if there are missing payments after adjustment
+        if (adjustedMissedInstallments > 0) {
+          const missedAmount = adjustedMissedInstallments * Number(loan.installmentPaymentAmmount);
           
           clientsWithMissingPayments.push({
             userId: loan.user.id,
@@ -462,10 +500,11 @@ export class ReportsService extends BaseStoreService {
             lastPaymentDate: relevantDate,
             lastPaymentWasLate: lastPayment.isLate || false,
             daysSinceLastPayment,
-            missedInstallments,
+            missedInstallments: adjustedMissedInstallments,
+            skippedDates: skippedDatesInPeriod,
             installmentAmount: Number(loan.installmentPaymentAmmount),
             gpsAmount: Number(loan.gpsInstallmentPayment),
-            totalMissedAmount: missedAmount + (missedInstallments * Number(loan.gpsInstallmentPayment)),
+            totalMissedAmount: missedAmount + (adjustedMissedInstallments * Number(loan.gpsInstallmentPayment)),
             totalInstallments: loan.installments,
             paidInstallments: loan.paidInstallments,
             loanStatus: loan.status,

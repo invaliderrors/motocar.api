@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNewsDto, UpdateNewsDto, QueryNewsDto, NewsType, NewsCategory } from './dto';
-import { differenceInDays } from 'date-fns';
+import { differenceInDays, addDays, format } from 'date-fns';
 
 @Injectable()
 export class NewsService {
@@ -17,10 +17,26 @@ export class NewsService {
   }
 
   /**
+   * Generate an array of dates between start and end date (inclusive)
+   */
+  private generateDateRange(startDate: Date, endDate: Date): Date[] {
+    const dates: Date[] = [];
+    let currentDate = new Date(startDate);
+    const end = new Date(endDate);
+    
+    while (currentDate <= end) {
+      dates.push(new Date(currentDate));
+      currentDate = addDays(currentDate, 1);
+    }
+    
+    return dates;
+  }
+
+  /**
    * Create a new news item
-   * - For LOAN_SPECIFIC: requires loanId
-   * - For STORE_WIDE: affects all loans in the store
-   * - Auto-calculates installments if autoCalculateInstallments is true
+   * - For LOAN_SPECIFIC: requires loanId, stores skipped dates instead of modifying loan
+   * - For STORE_WIDE: affects all loans in the store via skipped dates
+   * - Auto-generates skipped dates from date range if autoCalculateInstallments is true
    */
   async create(dto: CreateNewsDto, createdById: string) {
     // Validate loan-specific news
@@ -57,111 +73,29 @@ export class NewsService {
       daysUnavailable = this.calculateDaysBetweenDates(startDate, endDate);
     }
 
-    // Auto-calculate installments if enabled
-    let installmentsToSubtract = dto.installmentsToSubtract || 0;
-    let affectedLoansCount = 0;
+    // Build the skipped dates array
+    // Priority: 1) Explicitly provided skippedDates, 2) Auto-generate from date range
+    let skippedDates: Date[] = [];
     
-    if (dto.autoCalculateInstallments && daysUnavailable) {
-      if (dto.type === NewsType.LOAN_SPECIFIC && dto.loanId) {
-        // Handle single loan
-        const result = await this.calculateInstallmentsAndAmount(
-          dto.loanId,
-          daysUnavailable,
-        );
-        installmentsToSubtract = result.installments;
-        const amountToSubtract = result.amount;
-
-        // Update the specific loan
-        const loan = await this.prisma.loan.findUnique({
-          where: { id: dto.loanId },
-          select: { 
-            totalAmount: true, 
-            debtRemaining: true,
-            remainingInstallments: true,
-            installments: true,
-          },
-        });
-
-        if (loan) {
-          const newTotalAmount = loan.totalAmount - amountToSubtract;
-          const newDebtRemaining = Math.max(0, loan.debtRemaining - amountToSubtract);
-          // Round installmentsToSubtract to nearest integer for remaining installments
-          const installmentsToSubtractInt = Math.round(installmentsToSubtract);
-          const newRemainingInstallments = Math.max(0, loan.remainingInstallments - installmentsToSubtractInt);
-          const newTotalInstallments = Math.max(0, loan.installments - installmentsToSubtractInt);
-          
-          await this.prisma.loan.update({
-            where: { id: dto.loanId },
-            data: { 
-              totalAmount: newTotalAmount,
-              debtRemaining: newDebtRemaining,
-              remainingInstallments: newRemainingInstallments,
-              installments: newTotalInstallments,
-            },
-          });
-          affectedLoansCount = 1;
-        }
-      } else if (dto.type === NewsType.STORE_WIDE) {
-        // Handle all active loans in the store, optionally filtered by vehicle type
-        const whereClause: any = {
-          storeId: dto.storeId,
-          archived: false,
-          status: { in: ['ACTIVE', 'PENDING'] },
-        };
-
-        // If vehicleType is specified, filter by it
-        if (dto.vehicleType) {
-          whereClause.vehicle = {
-            vehicleType: dto.vehicleType,
-          };
-        }
-
-        const loans = await this.prisma.loan.findMany({
-          where: whereClause,
-          select: {
-            id: true,
-            totalAmount: true,
-            debtRemaining: true,
-            remainingInstallments: true,
-            installments: true,
-            paymentFrequency: true,
-            installmentPaymentAmmount: true,
-            gpsInstallmentPayment: true,
-          },
-        });
-
-        // Calculate and update each loan
-        for (const loan of loans) {
-          const result = await this.calculateInstallmentsAndAmount(
-            loan.id,
-            daysUnavailable,
-          );
-          
-          const newTotalAmount = loan.totalAmount - result.amount;
-          const newDebtRemaining = Math.max(0, loan.debtRemaining - result.amount);
-          // Round installmentsToSubtract to nearest integer for remaining installments
-          const installmentsToSubtractInt = Math.round(result.installments);
-          const newRemainingInstallments = Math.max(0, loan.remainingInstallments - installmentsToSubtractInt);
-          const newTotalInstallments = Math.max(0, loan.installments - installmentsToSubtractInt);
-          
-          await this.prisma.loan.update({
-            where: { id: loan.id },
-            data: {
-              totalAmount: newTotalAmount,
-              debtRemaining: newDebtRemaining,
-              remainingInstallments: newRemainingInstallments,
-              installments: newTotalInstallments,
-            },
-          });
-        }
-        
-        affectedLoansCount = loans.length;
-        // For store-wide news, use the calculated days unavailable
-        installmentsToSubtract = daysUnavailable; // Simplified for store-wide
-      }
+    if (dto.skippedDates && dto.skippedDates.length > 0) {
+      // Use explicitly provided skipped dates
+      skippedDates = dto.skippedDates.map(d => new Date(d));
+    } else if (dto.autoCalculateInstallments && dto.startDate && dto.endDate) {
+      // Auto-generate dates from the date range
+      const startDate = new Date(dto.startDate);
+      const endDate = new Date(dto.endDate);
+      skippedDates = this.generateDateRange(startDate, endDate);
+    } else if (dto.startDate && daysUnavailable && daysUnavailable > 0) {
+      // Generate dates starting from startDate for daysUnavailable days
+      const startDate = new Date(dto.startDate);
+      const endDate = addDays(startDate, daysUnavailable - 1);
+      skippedDates = this.generateDateRange(startDate, endDate);
     }
 
-    // Create the news
+    // Calculate installments to subtract (for display purposes only, loan is NOT modified)
+    let installmentsToSubtract = dto.installmentsToSubtract || skippedDates.length;
+
+    // Create the news (NO loan modification - just track skipped dates)
     const news = await this.prisma.news.create({
       data: {
         type: dto.type,
@@ -173,9 +107,14 @@ export class NewsService {
         endDate: dto.endDate ? new Date(dto.endDate) : null,
         isActive: dto.isActive ?? true,
         autoCalculateInstallments: dto.autoCalculateInstallments ?? false,
-        daysUnavailable: daysUnavailable || dto.daysUnavailable,
+        daysUnavailable: daysUnavailable || skippedDates.length,
         installmentsToSubtract,
         vehicleType: dto.vehicleType,
+        // Recurring date configuration
+        isRecurring: dto.isRecurring ?? false,
+        recurringDay: dto.recurringDay,
+        recurringMonths: dto.recurringMonths || [],
+        skippedDates: skippedDates,
         store: {
           connect: { id: dto.storeId },
         },
@@ -416,7 +355,7 @@ export class NewsService {
 
   /**
    * Update a news item
-   * Handles status toggle (isActive) by restoring/subtracting installments from loan
+   * Updates the skipped dates and other fields without modifying loans
    */
   async update(id: string, dto: UpdateNewsDto) {
     const existingNews = await this.prisma.news.findUnique({
@@ -428,82 +367,6 @@ export class NewsService {
       throw new NotFoundException('News not found');
     }
 
-    // Handle status toggle - restore or subtract installments when toggling isActive
-    if (dto.isActive !== undefined && dto.isActive !== existingNews.isActive) {
-      if (existingNews.autoCalculateInstallments && existingNews.daysUnavailable && existingNews.loanId) {
-        const result = await this.calculateInstallmentsAndAmount(
-          existingNews.loanId,
-          existingNews.daysUnavailable,
-        );
-
-        const loan = await this.prisma.loan.findUnique({
-          where: { id: existingNews.loanId },
-          select: { 
-            totalAmount: true, 
-            debtRemaining: true,
-            remainingInstallments: true,
-            installments: true,
-          },
-        });
-
-        if (loan) {
-          const installmentsChangeInt = Math.round(result.installments);
-          
-          if (dto.isActive === false) {
-            // Deactivating: RESTORE installments back to the loan
-            const newTotalAmount = loan.totalAmount + result.amount;
-            const newDebtRemaining = loan.debtRemaining + result.amount;
-            const newRemainingInstallments = loan.remainingInstallments + installmentsChangeInt;
-            const newTotalInstallments = loan.installments + installmentsChangeInt;
-            
-            await this.prisma.loan.update({
-              where: { id: existingNews.loanId },
-              data: { 
-                totalAmount: newTotalAmount,
-                debtRemaining: newDebtRemaining,
-                remainingInstallments: newRemainingInstallments,
-                installments: newTotalInstallments,
-              },
-            });
-          } else {
-            // Reactivating: SUBTRACT installments from the loan again
-            const newTotalAmount = loan.totalAmount - result.amount;
-            const newDebtRemaining = Math.max(0, loan.debtRemaining - result.amount);
-            const newRemainingInstallments = Math.max(0, loan.remainingInstallments - installmentsChangeInt);
-            const newTotalInstallments = Math.max(0, loan.installments - installmentsChangeInt);
-            
-            await this.prisma.loan.update({
-              where: { id: existingNews.loanId },
-              data: { 
-                totalAmount: newTotalAmount,
-                debtRemaining: newDebtRemaining,
-                remainingInstallments: newRemainingInstallments,
-                installments: newTotalInstallments,
-              },
-            });
-          }
-        }
-      }
-
-      // If just toggling status, update and return early
-      if (Object.keys(dto).length === 1 && dto.isActive !== undefined) {
-        return this.prisma.news.update({
-          where: { id },
-          data: { isActive: dto.isActive },
-          include: {
-            loan: {
-              include: {
-                user: true,
-                vehicle: true,
-              },
-            },
-            store: true,
-            createdBy: true,
-          },
-        });
-      }
-    }
-
     // Calculate days unavailable from date range if not explicitly provided
     let daysUnavailable = dto.daysUnavailable;
     if (!daysUnavailable && dto.startDate && dto.endDate) {
@@ -512,155 +375,28 @@ export class NewsService {
       daysUnavailable = this.calculateDaysBetweenDates(startDate, endDate);
     }
 
-    // Recalculate installments and amount if days unavailable changed
-    let installmentsToSubtract = dto.installmentsToSubtract;
+    // Build the skipped dates array if dates are being updated
+    let skippedDates: Date[] | undefined = undefined;
     
-    if (dto.autoCalculateInstallments && daysUnavailable) {
-      if (existingNews.type === NewsType.LOAN_SPECIFIC && existingNews.loanId) {
-        // Handle single loan update
-        const result = await this.calculateInstallmentsAndAmount(
-          existingNews.loanId,
-          daysUnavailable,
-        );
-        installmentsToSubtract = result.installments;
-        const amountToSubtract = result.amount;
+    if (dto.skippedDates !== undefined) {
+      // Use explicitly provided skipped dates
+      skippedDates = dto.skippedDates.map(d => new Date(d));
+    } else if (dto.autoCalculateInstallments && dto.startDate && dto.endDate) {
+      // Auto-generate dates from the date range
+      const startDate = new Date(dto.startDate);
+      const endDate = new Date(dto.endDate);
+      skippedDates = this.generateDateRange(startDate, endDate);
+    } else if (dto.startDate && daysUnavailable && daysUnavailable > 0) {
+      // Generate dates starting from startDate for daysUnavailable days
+      const startDate = new Date(dto.startDate);
+      const endDate = addDays(startDate, daysUnavailable - 1);
+      skippedDates = this.generateDateRange(startDate, endDate);
+    }
 
-        // If this is an update and the days changed, we need to adjust the loan
-        if (existingNews.daysUnavailable && existingNews.autoCalculateInstallments) {
-          const oldResult = await this.calculateInstallmentsAndAmount(
-            existingNews.loanId,
-            existingNews.daysUnavailable,
-          );
-          
-          const loan = await this.prisma.loan.findUnique({
-            where: { id: existingNews.loanId },
-            select: { 
-              totalAmount: true, 
-              debtRemaining: true,
-              remainingInstallments: true,
-              installments: true,
-            },
-          });
-
-          if (loan) {
-            // Net change (new - old)
-            const netAmountChange = amountToSubtract - oldResult.amount;
-            const netInstallmentsChange = installmentsToSubtract - oldResult.installments;
-            // Round to nearest integer for installments
-            const netInstallmentsChangeInt = Math.round(netInstallmentsChange);
-            
-            const newTotalAmount = loan.totalAmount - netAmountChange;
-            const newDebtRemaining = Math.max(0, loan.debtRemaining - netAmountChange);
-            const newRemainingInstallments = Math.max(0, loan.remainingInstallments - netInstallmentsChangeInt);
-            const newTotalInstallments = Math.max(0, loan.installments - netInstallmentsChangeInt);
-            
-            await this.prisma.loan.update({
-              where: { id: existingNews.loanId },
-              data: { 
-                totalAmount: newTotalAmount,
-                debtRemaining: newDebtRemaining,
-                remainingInstallments: newRemainingInstallments,
-                installments: newTotalInstallments,
-              },
-            });
-          }
-        } else {
-          // New auto-calculation, just subtract
-          const loan = await this.prisma.loan.findUnique({
-            where: { id: existingNews.loanId },
-            select: { 
-              totalAmount: true, 
-              debtRemaining: true,
-              remainingInstallments: true,
-              installments: true,
-            },
-          });
-
-          if (loan) {
-            const newTotalAmount = loan.totalAmount - amountToSubtract;
-            const newDebtRemaining = Math.max(0, loan.debtRemaining - amountToSubtract);
-            // Round to nearest integer for installments
-            const installmentsToSubtractInt = Math.round(installmentsToSubtract);
-            const newRemainingInstallments = Math.max(0, loan.remainingInstallments - installmentsToSubtractInt);
-            const newTotalInstallments = Math.max(0, loan.installments - installmentsToSubtractInt);
-            
-            await this.prisma.loan.update({
-              where: { id: existingNews.loanId },
-              data: { 
-                totalAmount: newTotalAmount,
-                debtRemaining: newDebtRemaining,
-                remainingInstallments: newRemainingInstallments,
-                installments: newTotalInstallments,
-              },
-            });
-          }
-        }
-      } else if (existingNews.type === NewsType.STORE_WIDE) {
-        // Handle all active loans in store, optionally filtered by vehicle type
-        const whereClause: any = {
-          storeId: existingNews.storeId,
-          archived: false,
-          status: { in: ['ACTIVE', 'PENDING'] },
-        };
-
-        // If vehicleType is specified, filter by it
-        if (dto.vehicleType || existingNews.vehicleType) {
-          const vehicleType = dto.vehicleType || existingNews.vehicleType;
-          whereClause.vehicle = {
-            vehicleType: vehicleType,
-          };
-        }
-
-        const loans = await this.prisma.loan.findMany({
-          where: whereClause,
-          select: {
-            id: true,
-            totalAmount: true,
-            debtRemaining: true,
-            remainingInstallments: true,
-            installments: true,
-          },
-        });
-
-        for (const loan of loans) {
-          const result = await this.calculateInstallmentsAndAmount(
-            loan.id,
-            daysUnavailable,
-          );
-          
-          // Calculate net change if updating existing auto-calculated news
-          let netAmountChange = result.amount;
-          let netInstallmentsChange = result.installments;
-          
-          if (existingNews.daysUnavailable && existingNews.autoCalculateInstallments) {
-            const oldResult = await this.calculateInstallmentsAndAmount(
-              loan.id,
-              existingNews.daysUnavailable,
-            );
-            netAmountChange = result.amount - oldResult.amount;
-            netInstallmentsChange = result.installments - oldResult.installments;
-          }
-          
-          const newTotalAmount = loan.totalAmount - netAmountChange;
-          const newDebtRemaining = Math.max(0, loan.debtRemaining - netAmountChange);
-          // Round to nearest integer for installments
-          const netInstallmentsChangeInt = Math.round(netInstallmentsChange);
-          const newRemainingInstallments = Math.max(0, loan.remainingInstallments - netInstallmentsChangeInt);
-          const newTotalInstallments = Math.max(0, loan.installments - netInstallmentsChangeInt);
-          
-          await this.prisma.loan.update({
-            where: { id: loan.id },
-            data: {
-              totalAmount: newTotalAmount,
-              debtRemaining: newDebtRemaining,
-              remainingInstallments: newRemainingInstallments,
-              installments: newTotalInstallments,
-            },
-          });
-        }
-        
-        installmentsToSubtract = daysUnavailable;
-      }
+    // Calculate installments to subtract (for display purposes only)
+    let installmentsToSubtract = dto.installmentsToSubtract;
+    if (skippedDates !== undefined && installmentsToSubtract === undefined) {
+      installmentsToSubtract = skippedDates.length;
     }
 
     const updateData: any = { ...dto };
@@ -676,6 +412,9 @@ export class NewsService {
     }
     if (installmentsToSubtract !== undefined) {
       updateData.installmentsToSubtract = installmentsToSubtract;
+    }
+    if (skippedDates !== undefined) {
+      updateData.skippedDates = skippedDates;
     }
 
     return this.prisma.news.update({
@@ -696,7 +435,7 @@ export class NewsService {
 
   /**
    * Delete a news item
-   * If the news had auto-calculated amounts, restore them to the loan(s)
+   * Simply deletes the news - no loan modification needed
    */
   async remove(id: string) {
     const news = await this.prisma.news.findUnique({
@@ -707,100 +446,8 @@ export class NewsService {
       throw new NotFoundException('News not found');
     }
 
-    // If this news had auto-calculated amounts, restore them to the loan(s)
-    if (news.autoCalculateInstallments && news.daysUnavailable) {
-      // Handle LOAN_SPECIFIC news
-      if (news.type === 'LOAN_SPECIFIC' && news.loanId) {
-        const result = await this.calculateInstallmentsAndAmount(
-          news.loanId,
-          news.daysUnavailable,
-        );
-
-        const loan = await this.prisma.loan.findUnique({
-          where: { id: news.loanId },
-          select: { 
-            totalAmount: true, 
-            debtRemaining: true,
-            remainingInstallments: true,
-            installments: true,
-          },
-        });
-
-        if (loan) {
-          // Add back the amount that was subtracted
-          const newTotalAmount = loan.totalAmount + result.amount;
-          const newDebtRemaining = loan.debtRemaining + result.amount;
-          // Round to nearest integer for installments
-          const installmentsToRestoreInt = Math.round(result.installments);
-          const newRemainingInstallments = loan.remainingInstallments + installmentsToRestoreInt;
-          const newTotalInstallments = loan.installments + installmentsToRestoreInt;
-          
-          await this.prisma.loan.update({
-            where: { id: news.loanId },
-            data: { 
-              totalAmount: newTotalAmount,
-              debtRemaining: newDebtRemaining,
-              remainingInstallments: newRemainingInstallments,
-              installments: newTotalInstallments,
-            },
-          });
-        }
-      }
-      // Handle STORE_WIDE news - restore for all affected loans
-      else if (news.type === 'STORE_WIDE' && news.storeId) {
-        const whereClause: any = {
-          storeId: news.storeId,
-          archived: false,
-          status: {
-            in: ['ACTIVE', 'PENDING'],
-          },
-        };
-
-        // If vehicleType was specified, filter by it
-        if (news.vehicleType) {
-          whereClause.vehicle = {
-            vehicleType: news.vehicleType,
-          };
-        }
-
-        const loans = await this.prisma.loan.findMany({
-          where: whereClause,
-          select: {
-            id: true,
-            totalAmount: true,
-            debtRemaining: true,
-            remainingInstallments: true,
-            installments: true,
-          },
-        });
-
-        // Restore installments for each loan
-        for (const loan of loans) {
-          const result = await this.calculateInstallmentsAndAmount(
-            loan.id,
-            news.daysUnavailable,
-          );
-
-          const newTotalAmount = loan.totalAmount + result.amount;
-          const newDebtRemaining = loan.debtRemaining + result.amount;
-          // Round to nearest integer for installments
-          const installmentsToRestoreInt = Math.round(result.installments);
-          const newRemainingInstallments = loan.remainingInstallments + installmentsToRestoreInt;
-          const newTotalInstallments = loan.installments + installmentsToRestoreInt;
-
-          await this.prisma.loan.update({
-            where: { id: loan.id },
-            data: {
-              totalAmount: newTotalAmount,
-              debtRemaining: newDebtRemaining,
-              remainingInstallments: newRemainingInstallments,
-              installments: newTotalInstallments,
-            },
-          });
-        }
-      }
-    }
-
+    // Simply delete the news - skipped dates are stored in the news record
+    // No loan modification needed
     return this.prisma.news.delete({
       where: { id },
     });
@@ -826,9 +473,9 @@ export class NewsService {
 
   /**
    * Get news summary for multiple loans in a single query
-   * Returns a map of loanId -> { totalNewsCount, activeNewsCount, totalInstallmentsExcluded }
+   * Returns a map of loanId -> { totalNewsCount, activeNewsCount, totalInstallmentsExcluded, skippedDatesCount }
    */
-  async getNewsSummaryBatch(loanIds: string[]): Promise<Record<string, { totalNewsCount: number; activeNewsCount: number; totalInstallmentsExcluded: number }>> {
+  async getNewsSummaryBatch(loanIds: string[]): Promise<Record<string, { totalNewsCount: number; activeNewsCount: number; totalInstallmentsExcluded: number; skippedDatesCount: number }>> {
     if (!loanIds || loanIds.length === 0) {
       return {};
     }
@@ -843,15 +490,16 @@ export class NewsService {
         isActive: true,
         endDate: true,
         installmentsToSubtract: true,
+        skippedDates: true,
       },
     });
 
     // Group by loanId and calculate totals
-    const result: Record<string, { totalNewsCount: number; activeNewsCount: number; totalInstallmentsExcluded: number }> = {};
+    const result: Record<string, { totalNewsCount: number; activeNewsCount: number; totalInstallmentsExcluded: number; skippedDatesCount: number }> = {};
 
     // Initialize all loanIds with zero values
     for (const loanId of loanIds) {
-      result[loanId] = { totalNewsCount: 0, activeNewsCount: 0, totalInstallmentsExcluded: 0 };
+      result[loanId] = { totalNewsCount: 0, activeNewsCount: 0, totalInstallmentsExcluded: 0, skippedDatesCount: 0 };
     }
 
     const now = new Date();
@@ -866,6 +514,7 @@ export class NewsService {
         if (isCurrentlyActive) {
           result[news.loanId].activeNewsCount++;
           result[news.loanId].totalInstallmentsExcluded += news.installmentsToSubtract || 0;
+          result[news.loanId].skippedDatesCount += news.skippedDates?.length || 0;
         }
       }
     }
@@ -886,5 +535,276 @@ export class NewsService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /**
+   * Get all skipped dates for a loan
+   * Combines dates from:
+   * 1. Loan-specific news (skippedDates array)
+   * 2. Store-wide news affecting this loan (skippedDates + recurring dates)
+   * Returns sorted unique dates
+   */
+  async getSkippedDatesForLoan(loanId: string): Promise<{ 
+    dates: Date[]; 
+    news: Array<{ id: string; title: string; category: string; dates: Date[]; isRecurring: boolean }> 
+  }> {
+    // Get the loan to find its store, vehicle type, and start date
+    const loan = await this.prisma.loan.findUnique({
+      where: { id: loanId },
+      include: { 
+        vehicle: true,
+        store: true,
+      },
+    });
+
+    if (!loan) {
+      throw new NotFoundException('Loan not found');
+    }
+
+    // Get loan-specific active news
+    const loanNews = await this.prisma.news.findMany({
+      where: {
+        loanId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        startDate: true,
+        skippedDates: true,
+        isRecurring: true,
+        recurringDay: true,
+        recurringMonths: true,
+      },
+    });
+
+    // Get store-wide active news that apply to this loan
+    const storeNews = await this.prisma.news.findMany({
+      where: {
+        storeId: loan.storeId,
+        type: NewsType.STORE_WIDE,
+        isActive: true,
+        OR: [
+          { vehicleType: null }, // Applies to all vehicle types
+          { vehicleType: loan.vehicle.vehicleType }, // Matches this vehicle's type
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        startDate: true,
+        skippedDates: true,
+        isRecurring: true,
+        recurringDay: true,
+        recurringMonths: true,
+      },
+    });
+
+    // Combine all news
+    const allNews = [...loanNews, ...storeNews];
+    
+    // Collect all dates
+    const allDates: Date[] = [];
+    const newsWithDates: Array<{ id: string; title: string; category: string; dates: Date[]; isRecurring: boolean }> = [];
+
+    for (const news of allNews) {
+      const newsDates: Date[] = [];
+      
+      // Add explicit skipped dates
+      if (news.skippedDates && news.skippedDates.length > 0) {
+        newsDates.push(...news.skippedDates);
+      }
+
+      // Generate recurring dates if applicable
+      // For store-wide recurring news (like holidays), we want to apply from the LOAN's start date
+      // This ensures late payment calculations are accurate for the entire loan period
+      // For loan-specific news, we use the news start date
+      if (news.isRecurring && news.recurringDay) {
+        const newsStartDate = new Date(news.startDate);
+        const loanStartDate = new Date(loan.startDate);
+        const today = new Date();
+        const endDate = new Date();
+        endDate.setMonth(endDate.getMonth() + 12);
+
+        // For recurring store-wide news (holidays, days off), apply from loan start date
+        // This allows retroactive application of recurring rules
+        // The news startDate acts as "when was this rule created" not "when does it apply from"
+        const effectiveStartDate = loanStartDate;
+
+        let currentDate = new Date(effectiveStartDate.getFullYear(), effectiveStartDate.getMonth(), 1);
+        
+        while (currentDate <= endDate) {
+          const month = currentDate.getMonth() + 1; // 1-12
+          
+          // Check if this month is included (empty array = all months)
+          if (news.recurringMonths.length === 0 || news.recurringMonths.includes(month)) {
+            // Create date for the recurring day in this month
+            const recurringDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), news.recurringDay);
+            
+            // Only add if the date is valid (day exists in month) and >= loan start date
+            if (recurringDate.getDate() === news.recurringDay && recurringDate >= effectiveStartDate) {
+              newsDates.push(recurringDate);
+            }
+          }
+          
+          // Move to next month
+          currentDate.setMonth(currentDate.getMonth() + 1);
+        }
+      }
+
+      if (newsDates.length > 0) {
+        allDates.push(...newsDates);
+        newsWithDates.push({
+          id: news.id,
+          title: news.title,
+          category: news.category,
+          dates: newsDates,
+          isRecurring: news.isRecurring,
+        });
+      }
+    }
+
+    // Remove duplicates and sort
+    const uniqueDates = [...new Set(allDates.map(d => d.getTime()))].map(t => new Date(t)).sort((a, b) => a.getTime() - b.getTime());
+
+    return {
+      dates: uniqueDates,
+      news: newsWithDates,
+    };
+  }
+
+  /**
+   * Get skipped dates for multiple loans in a batch
+   * Returns a map of loanId -> array of skipped dates
+   */
+  async getSkippedDatesBatch(loanIds: string[]): Promise<Record<string, Date[]>> {
+    if (!loanIds || loanIds.length === 0) {
+      return {};
+    }
+
+    // Get all loans with their vehicles and stores
+    const loans = await this.prisma.loan.findMany({
+      where: { id: { in: loanIds } },
+      include: { 
+        vehicle: true,
+        store: true,
+      },
+    });
+
+    // Initialize result with empty arrays
+    const result: Record<string, Date[]> = {};
+    for (const loanId of loanIds) {
+      result[loanId] = [];
+    }
+
+    // Get all loan-specific active news
+    const loanNews = await this.prisma.news.findMany({
+      where: {
+        loanId: { in: loanIds },
+        isActive: true,
+      },
+      select: {
+        loanId: true,
+        startDate: true,
+        skippedDates: true,
+        isRecurring: true,
+        recurringDay: true,
+        recurringMonths: true,
+      },
+    });
+
+    // Group loans by storeId to batch fetch store-wide news
+    const storeIds = [...new Set(loans.map(l => l.storeId))];
+    
+    // Get all store-wide active news
+    const storeNews = await this.prisma.news.findMany({
+      where: {
+        storeId: { in: storeIds },
+        type: NewsType.STORE_WIDE,
+        isActive: true,
+      },
+      select: {
+        storeId: true,
+        vehicleType: true,
+        startDate: true,
+        skippedDates: true,
+        isRecurring: true,
+        recurringDay: true,
+        recurringMonths: true,
+      },
+    });
+
+    const today = new Date();
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + 12);
+
+    // Helper function to get dates from a news item, using loan start date for recurring
+    const getDatesFromNews = (
+      news: { startDate: Date; skippedDates: Date[]; isRecurring: boolean; recurringDay: number | null; recurringMonths: number[] },
+      loanStartDate?: Date
+    ): Date[] => {
+      const dates: Date[] = [];
+
+      // Add explicit skipped dates
+      if (news.skippedDates && news.skippedDates.length > 0) {
+        dates.push(...news.skippedDates);
+      }
+
+      // Generate recurring dates if applicable
+      // For recurring news, apply from loan start date (if provided) to capture all historical skipped dates
+      if (news.isRecurring && news.recurringDay) {
+        const effectiveStartDate = new Date(loanStartDate || news.startDate);
+        let currentDate = new Date(effectiveStartDate.getFullYear(), effectiveStartDate.getMonth(), 1);
+        
+        while (currentDate <= endDate) {
+          const month = currentDate.getMonth() + 1;
+          
+          if (news.recurringMonths.length === 0 || news.recurringMonths.includes(month)) {
+            const recurringDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), news.recurringDay);
+            
+            if (recurringDate.getDate() === news.recurringDay && recurringDate >= effectiveStartDate) {
+              dates.push(recurringDate);
+            }
+          }
+          
+          currentDate.setMonth(currentDate.getMonth() + 1);
+        }
+      }
+
+      return dates;
+    };
+
+    // Process loan-specific news
+    for (const news of loanNews) {
+      if (news.loanId) {
+        // For loan-specific news, we still use the news startDate
+        const dates = getDatesFromNews(news, undefined);
+        result[news.loanId].push(...dates);
+      }
+    }
+
+    // Process store-wide news for each loan
+    for (const loan of loans) {
+      // Find applicable store news
+      const applicableStoreNews = storeNews.filter(sn => 
+        sn.storeId === loan.storeId && 
+        (sn.vehicleType === null || sn.vehicleType === loan.vehicle.vehicleType)
+      );
+
+      for (const news of applicableStoreNews) {
+        // For store-wide news, use loan.startDate to generate dates back to the loan start
+        const dates = getDatesFromNews(news, loan.startDate);
+        result[loan.id].push(...dates);
+      }
+
+      // Remove duplicates and sort for this loan
+      result[loan.id] = [...new Set(result[loan.id].map(d => d.getTime()))]
+        .map(t => new Date(t))
+        .sort((a, b) => a.getTime() - b.getTime());
+    }
+
+    return result;
   }
 }

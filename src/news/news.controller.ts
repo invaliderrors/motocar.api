@@ -49,9 +49,19 @@ export class NewsController {
     return this.newsService.getNewsSummaryBatch(body.loanIds);
   }
 
+  @Post('batch/skipped-dates')
+  getSkippedDatesBatch(@Body() body: { loanIds: string[] }) {
+    return this.newsService.getSkippedDatesBatch(body.loanIds);
+  }
+
   @Get('loan/:loanId/all')
   getAllLoanNews(@Param('loanId') loanId: string) {
     return this.newsService.getAllLoanNews(loanId);
+  }
+
+  @Get('loan/:loanId/skipped-dates')
+  getSkippedDatesForLoan(@Param('loanId') loanId: string) {
+    return this.newsService.getSkippedDatesForLoan(loanId);
   }
 
   @Get(':id')

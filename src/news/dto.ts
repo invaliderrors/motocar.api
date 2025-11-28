@@ -1,4 +1,5 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsDateString, IsUUID, IsBoolean, IsNumber, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsDateString, IsUUID, IsBoolean, IsNumber, Min, Max, IsArray, ArrayMinSize } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export enum NewsType {
   LOAN_SPECIFIC = 'LOAN_SPECIFIC',
@@ -88,6 +89,28 @@ export class CreateNewsDto {
   @IsOptional()
   @Min(0)
   installmentsToSubtract?: number;
+
+  // Recurring date configuration (for STORE_WIDE news)
+  @IsBoolean()
+  @IsOptional()
+  isRecurring?: boolean;
+
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  @Max(31)
+  recurringDay?: number;
+
+  @IsArray()
+  @IsOptional()
+  @IsNumber({}, { each: true })
+  @Type(() => Number)
+  recurringMonths?: number[];
+
+  @IsArray()
+  @IsOptional()
+  @IsDateString({}, { each: true })
+  skippedDates?: string[];
 }
 
 export class UpdateNewsDto {
@@ -140,6 +163,28 @@ export class UpdateNewsDto {
   @IsOptional()
   @Min(0)
   installmentsToSubtract?: number;
+
+  // Recurring date configuration (for STORE_WIDE news)
+  @IsBoolean()
+  @IsOptional()
+  isRecurring?: boolean;
+
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  @Max(31)
+  recurringDay?: number;
+
+  @IsArray()
+  @IsOptional()
+  @IsNumber({}, { each: true })
+  @Type(() => Number)
+  recurringMonths?: number[];
+
+  @IsArray()
+  @IsOptional()
+  @IsDateString({}, { each: true })
+  skippedDates?: string[];
 }
 
 export class QueryNewsDto {

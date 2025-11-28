@@ -6,13 +6,17 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CalculatePaymentCoverageDto, CreateInstallmentDto, FindInstallmentFiltersDto, UpdateInstallmentDto } from './installment.dto';
 import { toColombiaMidnightUtc, toColombiaEndOfDayUtc, toColombiaUtc } from 'src/lib/dates';
-import { addDays, differenceInDays, startOfDay } from 'date-fns';
+import { addDays, differenceInDays, startOfDay, isSameDay } from 'date-fns';
 import { BaseStoreService } from 'src/lib/base-store.service';
 import { LoanStatus, Prisma } from 'src/prisma/generated/client';
+import { NewsService } from '../news/news.service';
 
 @Injectable()
 export class InstallmentService extends BaseStoreService {
-  constructor(protected readonly prisma: PrismaService) {
+  constructor(
+    protected readonly prisma: PrismaService,
+    private readonly newsService: NewsService,
+  ) {
     super(prisma);
   }
 
@@ -89,8 +93,38 @@ export class InstallmentService extends BaseStoreService {
   }
 
   /**
+   * Helper to check if a date is in the skipped dates list
+   */
+  private isDateSkipped(date: Date, skippedDates: Date[]): boolean {
+    return skippedDates.some(skippedDate => isSameDay(date, skippedDate));
+  }
+
+  /**
+   * Count how many skipped dates fall between two dates (inclusive)
+   */
+  private countSkippedDatesInRange(startDate: Date, endDate: Date, skippedDates: Date[]): number {
+    const start = startOfDay(startDate);
+    const end = startOfDay(endDate);
+    
+    return skippedDates.filter(skippedDate => {
+      const date = startOfDay(skippedDate);
+      return date >= start && date <= end;
+    }).length;
+  }
+
+  /**
+   * Calculate the effective days between two dates, excluding skipped dates
+   */
+  private calculateEffectiveDays(startDate: Date, endDate: Date, skippedDates: Date[]): number {
+    const totalDays = differenceInDays(endDate, startDate);
+    const skippedCount = this.countSkippedDatesInRange(startDate, endDate, skippedDates);
+    return Math.max(0, totalDays - skippedCount);
+  }
+
+  /**
    * Public endpoint to calculate payment coverage before submitting.
    * This helps the frontend show the user what dates their payment will cover.
+   * Now includes skipped dates from news (store closures, holidays, etc.)
    */
   async calculateCoverage(dto: CalculatePaymentCoverageDto) {
     const loan = await this.prisma.loan.findUnique({
@@ -99,23 +133,38 @@ export class InstallmentService extends BaseStoreService {
 
     if (!loan) throw new NotFoundException('Loan not found');
 
+    // Fetch skipped dates for this loan (from news)
+    let skippedDates: Date[] = [];
+    try {
+      const skippedDatesData = await this.newsService.getSkippedDatesForLoan(dto.loanId);
+      skippedDates = skippedDatesData.dates.map(d => startOfDay(new Date(d)));
+    } catch (error) {
+      console.error('Error fetching skipped dates for coverage calculation:', error);
+      // Continue without skipped dates if there's an error
+    }
+
     const dailyRate = loan.installmentPaymentAmmount;
     const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
     const today = startOfDay(new Date());
 
-    const coverage = this.calculatePaymentCoverage(
+    // Calculate coverage considering skipped dates
+    const coverage = this.calculatePaymentCoverageWithSkippedDates(
       dto.amount,
       dailyRate,
       lastCoveredDate,
       today,
+      skippedDates,
     );
 
-    // Calculate days behind/ahead
-    const daysFromLastCoveredToToday = differenceInDays(today, lastCoveredDate);
-    const daysBehind = Math.max(0, daysFromLastCoveredToToday - 1); // -1 because lastCoveredDate is already paid
+    // Calculate days behind/ahead, excluding skipped dates
+    const effectiveDaysFromLastCoveredToToday = this.calculateEffectiveDays(lastCoveredDate, today, skippedDates);
+    const daysBehind = Math.max(0, effectiveDaysFromLastCoveredToToday - 1); // -1 because lastCoveredDate is already paid
     
-    // Calculate amount needed to catch up to today
+    // Calculate amount needed to catch up to today (only for non-skipped days)
     const amountNeededToCatchUp = daysBehind * dailyRate;
+
+    // Count skipped dates in the period for UI display
+    const skippedDatesInPeriod = this.countSkippedDatesInRange(lastCoveredDate, today, skippedDates);
 
     return {
       loanId: dto.loanId,
@@ -133,6 +182,68 @@ export class InstallmentService extends BaseStoreService {
       // Additional useful info
       willBeCurrentAfterPayment: dto.amount >= amountNeededToCatchUp,
       daysAheadAfterPayment: coverage.daysCovered - daysBehind,
+      // Skipped dates info
+      skippedDatesCount: skippedDatesInPeriod,
+      skippedDates: skippedDates.slice(0, 10).map(d => d.toISOString()), // Return first 10 for display
+    };
+  }
+
+  /**
+   * Calculate payment coverage with skipped dates consideration.
+   * The coverage end date will skip over any dates that should not be charged.
+   */
+  private calculatePaymentCoverageWithSkippedDates(
+    paymentAmount: number,
+    dailyRate: number,
+    lastCoveredDate: Date,
+    paymentDate: Date,
+    skippedDates: Date[],
+  ): {
+    daysCovered: number;
+    coverageStartDate: Date;
+    coverageEndDate: Date;
+    isLate: boolean;
+    latePaymentDate: Date | null;
+  } {
+    // Calculate how many effective days this payment covers
+    const daysCovered = Math.floor(paymentAmount / dailyRate);
+
+    // Coverage starts the day after the last covered date
+    let coverageStartDate = addDays(lastCoveredDate, 1);
+    
+    // Skip over any skipped dates at the start
+    while (this.isDateSkipped(coverageStartDate, skippedDates)) {
+      coverageStartDate = addDays(coverageStartDate, 1);
+    }
+
+    // Calculate coverage end date, skipping over skipped dates
+    let effectiveDaysCounted = 0;
+    let currentDate = new Date(coverageStartDate);
+    
+    while (effectiveDaysCounted < daysCovered) {
+      if (!this.isDateSkipped(currentDate, skippedDates)) {
+        effectiveDaysCounted++;
+      }
+      if (effectiveDaysCounted < daysCovered) {
+        currentDate = addDays(currentDate, 1);
+      }
+    }
+    
+    const coverageEndDate = currentDate;
+
+    // Payment is late if the coverage start date is before today
+    const today = startOfDay(paymentDate);
+    const isLate = coverageStartDate < today;
+
+    // If late, the latePaymentDate is the coverage start date (when it should have been paid)
+    const latePaymentDate = isLate ? coverageStartDate : null;
+
+    return {
+      daysCovered,
+      coverageStartDate,
+      coverageEndDate,
+      isLate,
+      latePaymentDate,
     };
   }
 
@@ -169,13 +280,24 @@ export class InstallmentService extends BaseStoreService {
     // Get the last covered date for this loan
     const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
     
-    // Calculate payment coverage based on amount
+    // Fetch skipped dates for this loan (from news)
+    let skippedDates: Date[] = [];
+    try {
+      const skippedDatesData = await this.newsService.getSkippedDatesForLoan(dto.loanId);
+      skippedDates = skippedDatesData.dates.map(d => startOfDay(new Date(d)));
+    } catch (error) {
+      console.error('Error fetching skipped dates for installment creation:', error);
+      // Continue without skipped dates if there's an error
+    }
+    
+    // Calculate payment coverage based on amount, considering skipped dates
     const paymentDate = dto.paymentDate ? new Date(dto.paymentDate) : new Date();
-    const coverage = this.calculatePaymentCoverage(
+    const coverage = this.calculatePaymentCoverageWithSkippedDates(
       dto.amount,
       dailyRate,
       lastCoveredDate,
       paymentDate,
+      skippedDates,
     );
 
     // Determine if late/advance: use automatic calculation if not explicitly provided
