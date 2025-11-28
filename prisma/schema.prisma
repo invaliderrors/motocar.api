@@ -529,8 +529,11 @@ enum VehicleType {
 
 enum VehicleStatus {
   IN_CIRCULATION
+  NOT_IN_CIRCULATION
   IN_WORKSHOP
   SEIZED_BY_PROSECUTOR
+  SEIZED_BY_TRANSIT
+  FINALIZED
 }
 
 enum ExpenseCategory {

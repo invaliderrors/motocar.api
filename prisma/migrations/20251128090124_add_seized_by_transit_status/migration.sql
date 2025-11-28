@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "LoanStatus" ADD VALUE 'IMMOBILIZED_BY_TRAFFIC';
+
+-- AlterEnum
+ALTER TYPE "VehicleStatus" ADD VALUE 'SEIZED_BY_TRANSIT';
