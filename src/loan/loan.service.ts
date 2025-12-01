@@ -460,8 +460,20 @@ export class LoanService extends BaseStoreService {
         periodsElapsed = 0;
     }
 
+    // If there was a down payment, translate it into number of prepaid periods
+    let prepaidInstallments = 0;
+    const installmentAmmount = (loan as any).installmentPaymentAmmount ?? (loan as any).installmentPaymentAmount ?? 0;
+    const downPayment = (loan as any).downPayment ?? 0;
+
+    if (installmentAmmount > 0 && downPayment > 0) {
+      prepaidInstallments = Math.floor(downPayment / installmentAmmount);
+    }
+
+    // Subtract prepaid installments (can't go below 0)
+    const effectiveExpected = Math.max(0, periodsElapsed - prepaidInstallments);
+
     // Can't expect more installments than the total
-    return Math.min(periodsElapsed, loan.installments);
+    return Math.min(effectiveExpected, loan.installments);
   }
 
   /**

@@ -23,6 +23,10 @@ export class InstallmentService extends BaseStoreService {
   /**
    * Calculate the last covered date for a loan based on payments made.
    * This is the date up to which all payments have covered the daily rate.
+   * 
+   * IMPORTANT: The downPayment is treated as prepaid installments. If a loan
+   * has a downPayment, that amount covers a certain number of days from the
+   * start date, so the user doesn't owe from day 1.
    */
   private async getLastCoveredDate(loanId: string, loan: any): Promise<Date> {
     // Get all existing payments for this loan
@@ -33,14 +37,27 @@ export class InstallmentService extends BaseStoreService {
 
     const dailyRate = loan.installmentPaymentAmmount;
     const loanStartDate = startOfDay(new Date(loan.startDate));
+    const downPayment = loan.downPayment || 0;
+
+    // Calculate days covered by the down payment
+    // The down payment acts as prepaid installments from the start date
+    let daysCoveredByDownPayment = 0;
+    if (dailyRate > 0 && downPayment > 0) {
+      daysCoveredByDownPayment = Math.floor(downPayment / dailyRate);
+    }
 
     if (existingPayments.length === 0) {
-      // No payments yet, last covered date is the day before the loan started
+      // No payments yet
+      if (daysCoveredByDownPayment > 0) {
+        // Down payment covers some days, so last covered date is start date + days covered - 1
+        return addDays(loanStartDate, daysCoveredByDownPayment - 1);
+      }
+      // No down payment, last covered date is the day before the loan started
       return addDays(loanStartDate, -1);
     }
 
     // Calculate total days covered by all payments
-    let totalDaysCovered = 0;
+    let totalDaysCovered = daysCoveredByDownPayment;
     for (const payment of existingPayments) {
       const daysCovered = payment.amount / dailyRate;
       totalDaysCovered += daysCovered;
