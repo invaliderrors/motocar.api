@@ -461,12 +461,15 @@ export class LoanService extends BaseStoreService {
     }
 
     // If there was a down payment, translate it into number of prepaid periods
+    // Use TOTAL daily rate (base + gps) for accurate calculation
     let prepaidInstallments = 0;
-    const installmentAmmount = (loan as any).installmentPaymentAmmount ?? (loan as any).installmentPaymentAmount ?? 0;
+    const baseRate = (loan as any).installmentPaymentAmmount ?? (loan as any).installmentPaymentAmount ?? 0;
+    const gpsRate = (loan as any).gpsInstallmentPayment ?? 0;
+    const totalDailyRate = baseRate + gpsRate;
     const downPayment = (loan as any).downPayment ?? 0;
 
-    if (installmentAmmount > 0 && downPayment > 0) {
-      prepaidInstallments = Math.floor(downPayment / installmentAmmount);
+    if (totalDailyRate > 0 && downPayment > 0) {
+      prepaidInstallments = Math.floor(downPayment / totalDailyRate);
     }
 
     // Subtract prepaid installments (can't go below 0)

@@ -35,15 +35,19 @@ export class InstallmentService extends BaseStoreService {
       orderBy: { createdAt: 'asc' },
     });
 
-    const dailyRate = loan.installmentPaymentAmmount;
+    // Use TOTAL daily rate (base + gps) for coverage calculation
+    const baseDailyRate = loan.installmentPaymentAmmount || 0;
+    const gpsDailyRate = loan.gpsInstallmentPayment || 0;
+    const totalDailyRate = baseDailyRate + gpsDailyRate;
+    
     const loanStartDate = startOfDay(new Date(loan.startDate));
     const downPayment = loan.downPayment || 0;
 
     // Calculate days covered by the down payment
     // The down payment acts as prepaid installments from the start date
     let daysCoveredByDownPayment = 0;
-    if (dailyRate > 0 && downPayment > 0) {
-      daysCoveredByDownPayment = Math.floor(downPayment / dailyRate);
+    if (totalDailyRate > 0 && downPayment > 0) {
+      daysCoveredByDownPayment = Math.floor(downPayment / totalDailyRate);
     }
 
     if (existingPayments.length === 0) {
@@ -56,10 +60,12 @@ export class InstallmentService extends BaseStoreService {
       return addDays(loanStartDate, -1);
     }
 
-    // Calculate total days covered by all payments
+    // Calculate total days covered by all payments (base + gps)
     let totalDaysCovered = daysCoveredByDownPayment;
     for (const payment of existingPayments) {
-      const daysCovered = payment.amount / dailyRate;
+      // Each payment's total = amount (base) + gps
+      const totalPayment = (payment.amount || 0) + (payment.gps || 0);
+      const daysCovered = totalPayment / totalDailyRate;
       totalDaysCovered += daysCovered;
     }
 
@@ -142,6 +148,8 @@ export class InstallmentService extends BaseStoreService {
    * Public endpoint to calculate payment coverage before submitting.
    * This helps the frontend show the user what dates their payment will cover.
    * Now includes skipped dates from news (store closures, holidays, etc.)
+   * 
+   * NOTE: dto.amount should be the TOTAL payment (base + gps) from the frontend
    */
   async calculateCoverage(dto: CalculatePaymentCoverageDto) {
     const loan = await this.prisma.loan.findUnique({
@@ -160,14 +168,19 @@ export class InstallmentService extends BaseStoreService {
       // Continue without skipped dates if there's an error
     }
 
-    const dailyRate = loan.installmentPaymentAmmount;
+    // Use TOTAL daily rate (base + gps) for coverage calculation
+    const baseDailyRate = loan.installmentPaymentAmmount || 0;
+    const gpsDailyRate = loan.gpsInstallmentPayment || 0;
+    const totalDailyRate = baseDailyRate + gpsDailyRate;
+    
     const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
     const today = startOfDay(new Date());
 
     // Calculate coverage considering skipped dates
+    // dto.amount is the TOTAL payment amount (base + gps)
     const coverage = this.calculatePaymentCoverageWithSkippedDates(
       dto.amount,
-      dailyRate,
+      totalDailyRate,
       lastCoveredDate,
       today,
       skippedDates,
@@ -178,14 +191,14 @@ export class InstallmentService extends BaseStoreService {
     const daysBehind = Math.max(0, effectiveDaysFromLastCoveredToToday - 1); // -1 because lastCoveredDate is already paid
     
     // Calculate amount needed to catch up to today (only for non-skipped days)
-    const amountNeededToCatchUp = daysBehind * dailyRate;
+    const amountNeededToCatchUp = daysBehind * totalDailyRate;
 
     // Count skipped dates in the period for UI display
     const skippedDatesInPeriod = this.countSkippedDatesInRange(lastCoveredDate, today, skippedDates);
 
     return {
       loanId: dto.loanId,
-      dailyRate,
+      dailyRate: totalDailyRate,
       loanStartDate: loan.startDate,
       lastCoveredDate,
       paymentAmount: dto.amount,
@@ -291,8 +304,14 @@ export class InstallmentService extends BaseStoreService {
       throw new BadRequestException('Payment amount exceeds remaining debt.');
     }
 
-    // Get the daily payment rate
-    const dailyRate = loan.installmentPaymentAmmount;
+    // Get the daily payment rates
+    const baseDailyRate = loan.installmentPaymentAmmount;
+    const gpsDailyRate = loan.gpsInstallmentPayment || 0;
+    const totalDailyRate = baseDailyRate + gpsDailyRate;
+    
+    // Calculate total payment amount (base + gps)
+    const gpsAmount = dto.gps || 0;
+    const totalPaymentAmount = dto.amount + gpsAmount;
     
     // Get the last covered date for this loan
     const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
@@ -307,11 +326,11 @@ export class InstallmentService extends BaseStoreService {
       // Continue without skipped dates if there's an error
     }
     
-    // Calculate payment coverage based on amount, considering skipped dates
+    // Calculate payment coverage based on TOTAL amount (base + gps), considering skipped dates
     const paymentDate = dto.paymentDate ? new Date(dto.paymentDate) : new Date();
     const coverage = this.calculatePaymentCoverageWithSkippedDates(
-      dto.amount,
-      dailyRate,
+      totalPaymentAmount,
+      totalDailyRate,
       lastCoveredDate,
       paymentDate,
       skippedDates,
@@ -352,13 +371,13 @@ export class InstallmentService extends BaseStoreService {
       },
     });
 
-    // Calculate fractional installments based on payment amount
-    // If customer pays 20,000 and installment is 25,000, this counts as 0.8 installments
-    const installmentAmount = loan.installmentPaymentAmmount || (loan.debtRemaining / loan.remainingInstallments);
-    const fractionalInstallmentsPaid = dto.amount / installmentAmount;
+    // Calculate fractional installments based on TOTAL payment amount (base + gps)
+    // If customer pays 34,000 total and daily rate is 34,000, this counts as 1 installment
+    const fractionalInstallmentsPaid = totalPaymentAmount / totalDailyRate;
     
     const updatedPaid = loan.paidInstallments + fractionalInstallmentsPaid;
     const updatedRemaining = Math.max(0, loan.installments - updatedPaid);
+    // Only add base amount to totalPaid and subtract from debt (GPS is separate)
     const updatedTotalPaid = loan.totalPaid + dto.amount;
     const updatedDebt = Math.max(0, loan.debtRemaining - dto.amount);
 
@@ -481,7 +500,8 @@ export class InstallmentService extends BaseStoreService {
                 include: {
                   provider: true,
                 }
-              }
+              },
+              payments: true, // Include all payments to calculate current status
             },
           },
           createdBy: {
@@ -502,8 +522,64 @@ export class InstallmentService extends BaseStoreService {
       this.prisma.installment.count({ where }),
     ]);
 
+    // Find the most recent installment per loan (to show current status only on latest)
+    const mostRecentInstallmentPerLoan = new Map<string, string>();
+    for (const installment of data) {
+      if (!mostRecentInstallmentPerLoan.has(installment.loanId)) {
+        // First occurrence is the most recent due to ordering by createdAt desc
+        mostRecentInstallmentPerLoan.set(installment.loanId, installment.id);
+      }
+    }
+
+    // Calculate current days behind/ahead for each unique loan
+    const loanStatusCache = new Map<string, { currentDaysBehind: number; lastCoveredDate: Date }>();
+    const today = startOfDay(new Date());
+
+    for (const installment of data) {
+      const loanId = installment.loanId;
+      // Only calculate status for most recent installments
+      if (mostRecentInstallmentPerLoan.get(loanId) === installment.id && !loanStatusCache.has(loanId)) {
+        const loan = installment.loan;
+        const lastCoveredDate = await this.getLastCoveredDate(loanId, loan);
+        
+        // Fetch skipped dates for accurate calculation
+        let skippedDates: Date[] = [];
+        try {
+          const skippedDatesData = await this.newsService.getSkippedDatesForLoan(loanId);
+          skippedDates = skippedDatesData.dates.map(d => startOfDay(new Date(d)));
+        } catch (error) {
+          // Continue without skipped dates
+        }
+
+        const effectiveDays = this.calculateEffectiveDays(lastCoveredDate, today, skippedDates);
+        const currentDaysBehind = Math.max(0, effectiveDays - 1); // -1 because lastCoveredDate is already paid
+        
+        loanStatusCache.set(loanId, { currentDaysBehind, lastCoveredDate });
+      }
+    }
+
+    // Enrich only the most recent installment per loan with current status
+    const enrichedData = data.map(installment => {
+      const isMostRecent = mostRecentInstallmentPerLoan.get(installment.loanId) === installment.id;
+      const loanStatus = isMostRecent ? loanStatusCache.get(installment.loanId) : null;
+      
+      return {
+        ...installment,
+        loan: {
+          ...installment.loan,
+          payments: undefined, // Remove payments array from response to reduce payload
+        },
+        // Only add currentDaysBehind to the most recent installment
+        ...(isMostRecent && loanStatus ? {
+          currentDaysBehind: loanStatus.currentDaysBehind,
+          lastCoveredDate: loanStatus.lastCoveredDate,
+          isLatestInstallment: true,
+        } : {}),
+      };
+    });
+
     return {
-      data,
+      data: enrichedData,
       pagination: {
         total,
         page,
