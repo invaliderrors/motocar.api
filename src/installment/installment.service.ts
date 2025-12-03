@@ -347,9 +347,11 @@ export class InstallmentService extends BaseStoreService {
     const isAdvance = dto.isAdvance !== undefined 
       ? dto.isAdvance 
       : (coverage.coverageEndDate > today);
+    // Always store the coverage end date as advancePaymentDate (represents last day covered by this payment)
+    // This is needed for display even when the payment doesn't put the client ahead
     const advancePaymentDate = dto.advancePaymentDate 
       ? toColombiaUtc(dto.advancePaymentDate) 
-      : (isAdvance ? toColombiaUtc(coverage.coverageEndDate) : null);
+      : toColombiaUtc(coverage.coverageEndDate);
 
     const installment = await this.prisma.installment.create({
       data: {
