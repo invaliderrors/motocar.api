@@ -87,14 +87,17 @@ export class LoanService extends BaseStoreService {
 
     // Calculate endDate based on loanTermMonths or provided endDate
     // Priority: 1) Provided endDate, 2) loanTermMonths, 3) Calculate from installments
+    // Use exactly 30 days per month for consistent calculations
+    const DAYS_PER_MONTH = 30;
     let endDate: Date;
     
     if (dto.endDate) {
       // Use provided end date
       endDate = new Date(dto.endDate);
     } else if (dto.loanTermMonths) {
-      // Calculate end date by adding months (includes all days, no Sunday exclusion)
-      endDate = addMonths(startDate, dto.loanTermMonths);
+      // Calculate end date using exactly 30 days per month
+      // Example: 18 months = 540 days (18 * 30)
+      endDate = addDays(startDate, dto.loanTermMonths * DAYS_PER_MONTH);
     } else {
       // Fallback: calculate from installments and frequency
       switch (paymentFrequency) {
@@ -222,6 +225,8 @@ export class LoanService extends BaseStoreService {
     await this.findOne(id, userStoreId);
     
     // If startDate or endDate is being updated, recalculate endDate if needed
+    // Use exactly 30 days per month for consistent calculations
+    const DAYS_PER_MONTH = 30;
     let updateData: any = { ...dto };
     
     if (dto.startDate && !dto.endDate) {
@@ -233,8 +238,8 @@ export class LoanService extends BaseStoreService {
       let endDate: Date;
       
       if (dto.loanTermMonths) {
-        // Calculate end date by adding months (includes all days, no Sunday exclusion)
-        endDate = addMonths(startDate, dto.loanTermMonths);
+        // Calculate end date using exactly 30 days per month
+        endDate = addDays(startDate, dto.loanTermMonths * DAYS_PER_MONTH);
       } else if (installments) {
         // Calculate from installments and frequency
         switch (paymentFrequency) {
@@ -248,13 +253,13 @@ export class LoanService extends BaseStoreService {
             endDate = addWeeks(startDate, installments * 2);
             break;
           case PaymentFrequency.MONTHLY:
-            endDate = addMonths(startDate, installments);
+            endDate = addDays(startDate, installments * DAYS_PER_MONTH);
             break;
           default:
-            endDate = addMonths(startDate, 12); // Default to 12 months
+            endDate = addDays(startDate, 12 * DAYS_PER_MONTH); // Default to 12 months (360 days)
         }
       } else {
-        endDate = addMonths(startDate, 12); // Default to 12 months
+        endDate = addDays(startDate, 12 * DAYS_PER_MONTH); // Default to 12 months (360 days)
       }
       
       updateData.endDate = endDate;
@@ -320,7 +325,9 @@ export class LoanService extends BaseStoreService {
     if (endDate) {
       newEndDate = new Date(endDate);
     } else {
-      // Recalculate end date based on new start date and payment frequency (includes all days)
+      // Recalculate end date based on new start date and payment frequency
+      // Use exactly 30 days per month for consistent calculations
+      const DAYS_PER_MONTH = 30;
       const paymentFrequency = loan.paymentFrequency as PaymentFrequency;
       
       switch (paymentFrequency) {
@@ -334,10 +341,10 @@ export class LoanService extends BaseStoreService {
           newEndDate = addWeeks(newStartDate, loan.installments * 2);
           break;
         case PaymentFrequency.MONTHLY:
-          newEndDate = addMonths(newStartDate, loan.installments);
+          newEndDate = addDays(newStartDate, loan.installments * DAYS_PER_MONTH);
           break;
         default:
-          newEndDate = addMonths(newStartDate, loan.installments);
+          newEndDate = addDays(newStartDate, loan.installments * DAYS_PER_MONTH);
       }
     }
     
