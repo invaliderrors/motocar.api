@@ -11,6 +11,9 @@ import { BaseStoreService } from 'src/lib/base-store.service';
 import { LoanStatus, Prisma } from 'src/prisma/generated/client';
 import { NewsService } from '../news/news.service';
 
+// Constants for 30-day month calculations
+const DAYS_PER_MONTH = 30;
+
 @Injectable()
 export class InstallmentService extends BaseStoreService {
   constructor(
@@ -18,6 +21,74 @@ export class InstallmentService extends BaseStoreService {
     private readonly newsService: NewsService,
   ) {
     super(prisma);
+  }
+
+  /**
+   * Add logical days to a date using the 30-day-per-month convention.
+   * This ensures consistent calculations: 1 month = 30 days exactly.
+   * 
+   * For example, May 19 + 193 days:
+   * - May has 12 days remaining (19-30)
+   * - 193 - 12 = 181, then 181 / 30 = 6 full months + 1 day
+   * - Result: May 19 + 6 months + 1 day = December 1
+   */
+  private addLogicalDays(startDate: Date, daysToAdd: number): Date {
+    if (daysToAdd <= 0) return startDate;
+    
+    const date = new Date(startDate);
+    let remainingDays = daysToAdd;
+    
+    // Calculate remaining days in the current month (using 30-day month)
+    const currentDay = date.getDate();
+    const daysLeftInMonth = DAYS_PER_MONTH - currentDay;
+    
+    if (remainingDays <= daysLeftInMonth) {
+      // All days fit in the current month
+      date.setDate(currentDay + remainingDays);
+      return date;
+    }
+    
+    // Move to the end of current month (day 30)
+    remainingDays -= daysLeftInMonth;
+    date.setDate(DAYS_PER_MONTH);
+    
+    // Add full months
+    const fullMonths = Math.floor(remainingDays / DAYS_PER_MONTH);
+    remainingDays = remainingDays % DAYS_PER_MONTH;
+    
+    // Move forward by full months
+    date.setMonth(date.getMonth() + fullMonths);
+    
+    // Add remaining days (moving to next month if needed)
+    if (remainingDays > 0) {
+      date.setMonth(date.getMonth() + 1);
+      date.setDate(remainingDays);
+    }
+    
+    return date;
+  }
+
+  /**
+   * Calculate the logical difference in days between two dates using 30-day months.
+   * This is the inverse of addLogicalDays.
+   */
+  private getLogicalDaysDifference(startDate: Date, endDate: Date): number {
+    if (endDate <= startDate) return 0;
+    
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    
+    // Calculate the difference in months and days
+    let months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+    let days = end.getDate() - start.getDate();
+    
+    // If end day is less than start day, we borrowed a month
+    if (days < 0) {
+      months -= 1;
+      days += DAYS_PER_MONTH;
+    }
+    
+    return (months * DAYS_PER_MONTH) + days;
   }
 
   /**
@@ -53,11 +124,12 @@ export class InstallmentService extends BaseStoreService {
     if (existingPayments.length === 0) {
       // No payments yet
       if (daysCoveredByDownPayment > 0) {
-        // Down payment covers some days, so last covered date is start date + days covered - 1
-        return addDays(loanStartDate, daysCoveredByDownPayment - 1);
+        // Down payment covers some days starting from the day AFTER loan start
+        // Use logical days (30-day months) for consistent calculation
+        return this.addLogicalDays(loanStartDate, daysCoveredByDownPayment);
       }
-      // No down payment, last covered date is the day before the loan started
-      return addDays(loanStartDate, -1);
+      // No down payment, last covered date is the loan start date itself (nothing covered yet)
+      return loanStartDate;
     }
 
     // Calculate total days covered by all payments (base + gps)
@@ -69,14 +141,17 @@ export class InstallmentService extends BaseStoreService {
       totalDaysCovered += daysCovered;
     }
 
-    // Last covered date is loan start date + total days covered - 1
-    // (because if you pay for 1 day starting from Nov 15, you cover Nov 15)
-    return addDays(loanStartDate, Math.floor(totalDaysCovered) - 1);
+    // Last covered date is loan start date + total days covered
+    // Use logical days (30-day months) for consistent calculation
+    // The loan start date is NOT a payment day - payments start the day after
+    // So if you pay for 193 days starting May 19, you cover May 20 through Dec 2
+    return this.addLogicalDays(loanStartDate, Math.floor(totalDaysCovered));
   }
 
   /**
    * Calculate payment coverage information based on the amount paid.
    * Returns the date range this payment covers and whether it's late.
+   * Uses 30-day months for consistent date calculations.
    */
   private calculatePaymentCoverage(
     paymentAmount: number,
@@ -96,8 +171,9 @@ export class InstallmentService extends BaseStoreService {
     // Coverage starts the day after the last covered date
     const coverageStartDate = addDays(lastCoveredDate, 1);
     
-    // Coverage ends after the days covered (fractional days round down for the end date)
-    const coverageEndDate = addDays(coverageStartDate, Math.floor(daysCovered) - 1);
+    // Coverage ends after the days covered using logical days (30-day months)
+    // (fractional days round down for the end date)
+    const coverageEndDate = this.addLogicalDays(coverageStartDate, Math.floor(daysCovered) - 1);
 
     // Payment is late if the coverage start date is before today
     const today = startOfDay(new Date());
@@ -136,10 +212,12 @@ export class InstallmentService extends BaseStoreService {
   }
 
   /**
-   * Calculate the effective days between two dates, excluding skipped dates
+   * Calculate the effective days between two dates, excluding skipped dates.
+   * Uses 30-day months for consistent calculation.
    */
   private calculateEffectiveDays(startDate: Date, endDate: Date, skippedDates: Date[]): number {
-    const totalDays = differenceInDays(endDate, startDate);
+    // Use logical days (30-day months) instead of actual calendar days
+    const totalDays = this.getLogicalDaysDifference(startDate, endDate);
     const skippedCount = this.countSkippedDatesInRange(startDate, endDate, skippedDates);
     return Math.max(0, totalDays - skippedCount);
   }
@@ -187,8 +265,11 @@ export class InstallmentService extends BaseStoreService {
     );
 
     // Calculate days behind/ahead, excluding skipped dates
+    // effectiveDaysFromLastCoveredToToday = days from lastCoveredDate to today
+    // If lastCoveredDate = Dec 3 and today = Dec 4, effectiveDays = 1 (owes Dec 4)
+    // If lastCoveredDate = Dec 4 and today = Dec 4, effectiveDays = 0 (up to date)
     const effectiveDaysFromLastCoveredToToday = this.calculateEffectiveDays(lastCoveredDate, today, skippedDates);
-    const daysBehind = Math.max(0, effectiveDaysFromLastCoveredToToday - 1); // -1 because lastCoveredDate is already paid
+    const daysBehind = Math.max(0, effectiveDaysFromLastCoveredToToday);
     
     // Calculate amount needed to catch up to today (only for non-skipped days)
     const amountNeededToCatchUp = daysBehind * totalDailyRate;
@@ -220,6 +301,7 @@ export class InstallmentService extends BaseStoreService {
 
   /**
    * Calculate payment coverage with skipped dates consideration.
+   * Uses 30-day months for date calculations.
    * The coverage end date will skip over any dates that should not be charged.
    */
   private calculatePaymentCoverageWithSkippedDates(
@@ -246,20 +328,16 @@ export class InstallmentService extends BaseStoreService {
       coverageStartDate = addDays(coverageStartDate, 1);
     }
 
-    // Calculate coverage end date, skipping over skipped dates
-    let effectiveDaysCounted = 0;
-    let currentDate = new Date(coverageStartDate);
+    // Calculate coverage end date using logical days (30-day months)
+    // Then adjust for any skipped dates in the range
+    let coverageEndDate = this.addLogicalDays(coverageStartDate, daysCovered - 1);
     
-    while (effectiveDaysCounted < daysCovered) {
-      if (!this.isDateSkipped(currentDate, skippedDates)) {
-        effectiveDaysCounted++;
-      }
-      if (effectiveDaysCounted < daysCovered) {
-        currentDate = addDays(currentDate, 1);
-      }
+    // Count skipped dates in this range and extend coverage accordingly
+    const skippedInRange = this.countSkippedDatesInRange(coverageStartDate, coverageEndDate, skippedDates);
+    if (skippedInRange > 0) {
+      // Extend coverage by the number of skipped dates
+      coverageEndDate = this.addLogicalDays(coverageEndDate, skippedInRange);
     }
-    
-    const coverageEndDate = currentDate;
 
     // Payment is late if the coverage start date is before today
     const today = startOfDay(paymentDate);
@@ -554,7 +632,10 @@ export class InstallmentService extends BaseStoreService {
         }
 
         const effectiveDays = this.calculateEffectiveDays(lastCoveredDate, today, skippedDates);
-        const currentDaysBehind = Math.max(0, effectiveDays - 1); // -1 because lastCoveredDate is already paid
+        // effectiveDays = days from lastCoveredDate to today
+        // If lastCoveredDate = Dec 3 and today = Dec 4, effectiveDays = 1 (owes Dec 4)
+        // If lastCoveredDate = Dec 4 and today = Dec 4, effectiveDays = 0 (up to date)
+        const currentDaysBehind = Math.max(0, effectiveDays);
         
         loanStatusCache.set(loanId, { currentDaysBehind, lastCoveredDate });
       }

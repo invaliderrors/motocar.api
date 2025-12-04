@@ -437,7 +437,8 @@ export class LoanService extends BaseStoreService {
 
   /**
    * Calculate how many installments should have been paid based on time elapsed
-   * since the loan start date
+   * since the loan start date. Uses 30-day months for daily frequency.
+   * Note: The loan start date is NOT a payment day - payments start the day after.
    */
   private calculateExpectedInstallments(loan: Loan): number {
     const now = new Date();
@@ -449,10 +450,21 @@ export class LoanService extends BaseStoreService {
     }
 
     let periodsElapsed = 0;
+    const DAYS_PER_MONTH = 30;
 
     switch (loan.paymentFrequency) {
       case PaymentFrequency.DAILY:
-        periodsElapsed = differenceInDays(now, startDate);
+        // Use 30-day months for consistent calculation
+        // Calculate months and days difference
+        const monthsDiff = (now.getFullYear() - startDate.getFullYear()) * 12 + 
+                          (now.getMonth() - startDate.getMonth());
+        let daysDiff = now.getDate() - startDate.getDate();
+        if (daysDiff < 0) {
+          // Borrowed a month
+          periodsElapsed = (monthsDiff - 1) * DAYS_PER_MONTH + (DAYS_PER_MONTH + daysDiff);
+        } else {
+          periodsElapsed = monthsDiff * DAYS_PER_MONTH + daysDiff;
+        }
         break;
       case PaymentFrequency.WEEKLY:
         periodsElapsed = differenceInWeeks(now, startDate);
