@@ -87,6 +87,14 @@ export class CreateReceiptDto {
   @IsNumber()
   @IsOptional()
   debtRemaining?: number;
+
+  @IsNumber()
+  @IsOptional()
+  daysAhead?: number;
+
+  @IsNumber()
+  @IsOptional()
+  daysBehind?: number;
 }
 
 export class SendReceiptWhatsappDto {

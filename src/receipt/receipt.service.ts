@@ -92,30 +92,43 @@ export class ReceiptService {
     }
 
     // Calculate days since last payment or days in advance
+    // Use pre-calculated values from frontend if available, otherwise calculate
     let daysSinceLastPayment: number | null = null;
     let daysInAdvance: number | null = null;
     let installmentsInAdvance: number = 0;
     
-    if (paymentType === 'advance' && dto.advancePaymentDate) {
-      // For advance payments, calculate how many days ahead this payment is
-      daysInAdvance = this.calculateDaysInAdvance(new Date(), new Date(dto.advancePaymentDate));
+    if (paymentType === 'advance') {
+      // Use pre-calculated daysAhead from frontend if available
+      if (dto.daysAhead !== undefined && dto.daysAhead !== null) {
+        daysInAdvance = dto.daysAhead;
+      } else if (dto.advancePaymentDate) {
+        // Fallback to calculating if not provided
+        daysInAdvance = this.calculateDaysInAdvance(new Date(), new Date(dto.advancePaymentDate));
+      }
       
       // Calculate installments covered by advance payment
       // For daily frequency: 1 day = 1 installment
-      if (dto.paymentFrequency === 'DAILY') {
-        installmentsInAdvance = daysInAdvance;
-      } else if (dto.paymentFrequency === 'WEEKLY') {
-        installmentsInAdvance = Math.floor(daysInAdvance / 7 * 10) / 10; // One decimal
-      } else if (dto.paymentFrequency === 'BIWEEKLY') {
-        installmentsInAdvance = Math.floor(daysInAdvance / 14 * 10) / 10; // One decimal
-      } else if (dto.paymentFrequency === 'MONTHLY') {
-        installmentsInAdvance = Math.floor(daysInAdvance / 30 * 10) / 10; // One decimal
+      if (daysInAdvance !== null) {
+        if (dto.paymentFrequency === 'DAILY') {
+          installmentsInAdvance = daysInAdvance;
+        } else if (dto.paymentFrequency === 'WEEKLY') {
+          installmentsInAdvance = Math.floor(daysInAdvance / 7 * 10) / 10; // One decimal
+        } else if (dto.paymentFrequency === 'BIWEEKLY') {
+          installmentsInAdvance = Math.floor(daysInAdvance / 14 * 10) / 10; // One decimal
+        } else if (dto.paymentFrequency === 'MONTHLY') {
+          installmentsInAdvance = Math.floor(daysInAdvance / 30 * 10) / 10; // One decimal
+        }
       }
-    } else if (dto.lastPaymentDate) {
-      // For late/on-time payments, calculate days since last payment
-      daysSinceLastPayment = this.calculateDaysSinceLastPayment(dto.lastPaymentDate);
-    } else {
-      daysSinceLastPayment = dto.daysSinceLastPayment ?? null;
+    } else if (paymentType === 'late') {
+      // Use pre-calculated daysBehind from frontend if available
+      if (dto.daysBehind !== undefined && dto.daysBehind !== null) {
+        daysSinceLastPayment = dto.daysBehind;
+      } else if (dto.lastPaymentDate) {
+        // Fallback to calculating if not provided
+        daysSinceLastPayment = this.calculateDaysSinceLastPayment(dto.lastPaymentDate);
+      } else {
+        daysSinceLastPayment = dto.daysSinceLastPayment ?? null;
+      }
     }
 
     // Format payment status information with fractional installments
