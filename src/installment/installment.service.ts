@@ -98,11 +98,17 @@ export class InstallmentService extends BaseStoreService {
    * IMPORTANT: The downPayment is treated as prepaid installments. If a loan
    * has a downPayment, that amount covers a certain number of days from the
    * start date, so the user doesn't owe from day 1.
+   * 
+   * @param excludeInstallmentId - If provided, excludes this installment from calculation (for editing)
    */
-  private async getLastCoveredDate(loanId: string, loan: any): Promise<Date> {
+  private async getLastCoveredDate(loanId: string, loan: any, excludeInstallmentId?: string): Promise<Date> {
     // Get all existing payments for this loan
     const existingPayments = await this.prisma.installment.findMany({
-      where: { loanId },
+      where: { 
+        loanId,
+        // Exclude the installment being edited if provided
+        ...(excludeInstallmentId ? { id: { not: excludeInstallmentId } } : {}),
+      },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -228,6 +234,7 @@ export class InstallmentService extends BaseStoreService {
    * Now includes skipped dates from news (store closures, holidays, etc.)
    * 
    * NOTE: dto.amount should be the TOTAL payment (base + gps) from the frontend
+   * NOTE: dto.excludeInstallmentId is used when editing an installment to exclude it from calculation
    */
   async calculateCoverage(dto: CalculatePaymentCoverageDto) {
     const loan = await this.prisma.loan.findUnique({
@@ -251,7 +258,8 @@ export class InstallmentService extends BaseStoreService {
     const gpsDailyRate = loan.gpsInstallmentPayment || 0;
     const totalDailyRate = baseDailyRate + gpsDailyRate;
     
-    const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
+    // Pass excludeInstallmentId to exclude the installment being edited
+    const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan, dto.excludeInstallmentId);
     const today = startOfDay(new Date());
 
     // Calculate coverage considering skipped dates

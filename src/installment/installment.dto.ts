@@ -70,6 +70,10 @@ export class CalculatePaymentCoverageDto {
   @IsNumber()
   @Min(0)
   amount: number;
+
+  @IsOptional()
+  @IsUUID()
+  excludeInstallmentId?: string;
 }
 
 export class FindInstallmentFiltersDto {
