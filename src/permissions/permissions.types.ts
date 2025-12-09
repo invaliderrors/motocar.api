@@ -2,29 +2,21 @@ import { UserRole } from "src/prisma/generated/client";
 
 
 export enum Resource {
-  CLOSING = 'CLOSING',
-  INSTALLMENT = 'INSTALLMENT',
-  VEHICLE = 'VEHICLE',
-  USER = 'USER',
-  LOAN = 'LOAN',
-  EXPENSE = 'EXPENSE',
-  OWNER = 'OWNER',
-  PROVIDER = 'PROVIDER',
-  CASH_FLOW = 'CASH_FLOW',
-  REPORT = 'REPORT',
-  DASHBOARD = 'DASHBOARD',
-  CONTRACT = 'CONTRACT',
-  RECEIPT = 'RECEIPT',
+  CLOSING = 'CLOSING',           // Cierre de caja
+  DASHBOARD = 'DASHBOARD',       // Dashboard
+  EXPENSE = 'EXPENSE',           // Egresos
+  INSTALLMENT = 'INSTALLMENT',   // Cuotas
+  CONTRACT = 'CONTRACT',         // Contratos
+  NEWS = 'NEWS',                 // Novedades
+  PROVIDER = 'PROVIDER',         // Proveedores
+  REPORT = 'REPORT',             // Reportes
 }
 
 export enum Action {
-  VIEW = 'VIEW',
+  VIEW = 'VIEW',     // For read-only modules like Dashboard and Reports
   CREATE = 'CREATE',
   EDIT = 'EDIT',
   DELETE = 'DELETE',
-  APPROVE = 'APPROVE',
-  EXPORT = 'EXPORT',
-  MANAGE = 'MANAGE',
 }
 
 export interface PermissionCheck {
@@ -39,36 +31,18 @@ export type PermissionsMap = {
 // Default permission sets for common roles
 export const DEFAULT_PERMISSIONS: Record<UserRole, PermissionsMap> = {
   [UserRole.ADMIN]: {
-    [Resource.CLOSING]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE, Action.APPROVE, Action.EXPORT],
-    [Resource.INSTALLMENT]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE, Action.EXPORT],
-    [Resource.VEHICLE]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE],
-    [Resource.USER]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE],
-    [Resource.LOAN]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE, Action.APPROVE],
-    [Resource.EXPENSE]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE, Action.EXPORT],
-    [Resource.OWNER]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE, Action.MANAGE],
-    [Resource.PROVIDER]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE],
-    [Resource.CASH_FLOW]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE, Action.EXPORT],
-    [Resource.REPORT]: [Action.VIEW, Action.EXPORT],
-    [Resource.DASHBOARD]: [Action.VIEW],
-    [Resource.CONTRACT]: [Action.VIEW, Action.CREATE, Action.EDIT, Action.DELETE, Action.EXPORT],
-    [Resource.RECEIPT]: [Action.VIEW, Action.CREATE, Action.EXPORT],
+    [Resource.CLOSING]: [Action.CREATE, Action.EDIT, Action.DELETE],
+    [Resource.DASHBOARD]: [Action.VIEW],  // Dashboard is read-only
+    [Resource.EXPENSE]: [Action.CREATE, Action.EDIT, Action.DELETE],
+    [Resource.INSTALLMENT]: [Action.CREATE, Action.EDIT, Action.DELETE],
+    [Resource.CONTRACT]: [Action.CREATE, Action.EDIT, Action.DELETE],
+    [Resource.NEWS]: [Action.CREATE, Action.EDIT, Action.DELETE],
+    [Resource.PROVIDER]: [Action.CREATE, Action.EDIT, Action.DELETE],
+    [Resource.REPORT]: [Action.VIEW],  // Reports are read-only
   } as PermissionsMap,
   
-  // EMPLOYEE permissions (formerly MODERATOR + USER combined)
-  [UserRole.EMPLOYEE]: {
-    [Resource.CLOSING]: [Action.VIEW, Action.CREATE],
-    [Resource.INSTALLMENT]: [Action.VIEW, Action.CREATE, Action.EDIT],
-    [Resource.VEHICLE]: [Action.VIEW],
-    [Resource.USER]: [Action.VIEW],
-    [Resource.LOAN]: [Action.VIEW, Action.CREATE, Action.EDIT],
-    [Resource.EXPENSE]: [Action.VIEW, Action.CREATE, Action.EDIT],
-    [Resource.PROVIDER]: [Action.VIEW],
-    [Resource.CASH_FLOW]: [Action.VIEW, Action.CREATE],
-    [Resource.REPORT]: [Action.VIEW],
-    [Resource.DASHBOARD]: [Action.VIEW],
-    [Resource.CONTRACT]: [Action.VIEW],
-    [Resource.RECEIPT]: [Action.VIEW, Action.CREATE],
-  } as PermissionsMap,
+  // EMPLOYEE permissions - no default permissions, must be explicitly granted
+  [UserRole.EMPLOYEE]: {} as PermissionsMap,
 };
 
 // Helper function to get all available permissions
