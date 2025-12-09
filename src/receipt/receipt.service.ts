@@ -278,11 +278,13 @@ export class ReceiptService {
   }
 
   private formatCurrency(value: number): string {
-    return new Intl.NumberFormat("es-CO", {
+    const formatted = new Intl.NumberFormat("es-CO", {
       style: "currency",
       currency: "COP",
       minimumFractionDigits: 0,
     }).format(value)
+    // Replace $ with COP for clarity
+    return formatted.replace('$', 'COP ')
   }
 
   private formatDate(dateInput: string | Date | null | undefined): string {
