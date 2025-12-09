@@ -75,7 +75,7 @@ export class ReceiptService {
     
     // Determine payment type and display date:
     // 1. Late payment: show latePaymentDate (original due date) in red
-    // 2. Advance payment: show advancePaymentDate (future due date) in blue
+    // 2. Advance payment: show advancePaymentDate (future due date) in blue - only if daysAhead > 0
     // 3. On-time payment: show paymentDate (actual payment date) in normal color
     let displayDate: Date;
     let paymentType: 'late' | 'advance' | 'ontime';
@@ -83,7 +83,7 @@ export class ReceiptService {
     if (dto.isLate && dto.latePaymentDate) {
       displayDate = new Date(dto.latePaymentDate);
       paymentType = 'late';
-    } else if (dto.isAdvance && dto.advancePaymentDate) {
+    } else if (dto.isAdvance && dto.advancePaymentDate && dto.daysAhead && dto.daysAhead > 0) {
       displayDate = new Date(dto.advancePaymentDate);
       paymentType = 'advance';
     } else {
