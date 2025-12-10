@@ -65,48 +65,63 @@ export class NewsService {
     // Get all skipped dates for this loan
     const { dates: skippedDates } = await this.getSkippedDatesForLoan(loanId);
 
-    // Calculate how many days have elapsed since loan start
-    const today = new Date();
-    const loanStartDate = new Date(loan.startDate);
-    const totalDaysElapsed = differenceInDays(today, loanStartDate);
-
-    // Count how many skipped dates fall within the elapsed period
-    const skippedDatesInPeriod = skippedDates.filter(date => {
-      const skipDate = new Date(date);
-      return skipDate >= loanStartDate && skipDate <= today;
-    }).length;
-
-    // Calculate working days (total days - skipped dates)
-    const workingDays = Math.max(0, totalDaysElapsed - skippedDatesInPeriod);
-
-    // Calculate how many installments the totalPaid covers based on working days
+    // Calculate how many installments the totalPaid covers
     // The totalPaid includes the down payment and all subsequent payments
-    let paidInstallments = 0;
+    let basePaidInstallments = 0;
 
     switch (loan.paymentFrequency) {
       case 'DAILY':
-        // For daily payments: 1 working day = 1 installment
-        paidInstallments = Math.floor(loan.totalPaid / totalDailyRate);
+        // For daily payments: totalPaid / dailyRate = installments covered
+        basePaidInstallments = Math.floor(loan.totalPaid / totalDailyRate);
         break;
       case 'WEEKLY':
-        // For weekly payments: 7 working days = 1 installment
+        // For weekly payments: 7 days = 1 installment
         const weeklyInstallments = Math.floor(loan.totalPaid / (totalDailyRate * 7));
-        paidInstallments = weeklyInstallments;
+        basePaidInstallments = weeklyInstallments;
         break;
       case 'BIWEEKLY':
-        // For biweekly payments: 14 working days = 1 installment
+        // For biweekly payments: 14 days = 1 installment
         const biweeklyInstallments = Math.floor(loan.totalPaid / (totalDailyRate * 14));
-        paidInstallments = biweeklyInstallments;
+        basePaidInstallments = biweeklyInstallments;
         break;
       case 'MONTHLY':
-        // For monthly payments: 30 working days = 1 installment
+        // For monthly payments: 30 days = 1 installment
         const monthlyInstallments = Math.floor(loan.totalPaid / (totalDailyRate * 30));
-        paidInstallments = monthlyInstallments;
+        basePaidInstallments = monthlyInstallments;
         break;
       default:
         // Default to daily
-        paidInstallments = Math.floor(loan.totalPaid / totalDailyRate);
+        basePaidInstallments = Math.floor(loan.totalPaid / totalDailyRate);
     }
+
+    // Convert skipped dates to a Set of date strings for fast lookup
+    const skippedDateStrings = new Set(
+      skippedDates.map(d => format(new Date(d), 'yyyy-MM-dd'))
+    );
+
+    // Now iterate through days from loan start to determine final coverage
+    // We need to find how many calendar days it takes to cover basePaidInstallments working days
+    const loanStartDate = new Date(loan.startDate);
+    let currentDate = new Date(loanStartDate);
+    let workingDaysCovered = 0;
+    let calendarDaysCovered = 0;
+
+    // Iterate until we've covered all paid installments
+    while (workingDaysCovered < basePaidInstallments) {
+      const dateString = format(currentDate, 'yyyy-MM-dd');
+      
+      // If this date is not skipped, it counts as a working day
+      if (!skippedDateStrings.has(dateString)) {
+        workingDaysCovered++;
+      }
+      
+      calendarDaysCovered++;
+      currentDate = addDays(currentDate, 1);
+    }
+
+    // paidInstallments represents calendar days covered (including skipped dates)
+    // This is what gets displayed as "coverage date" in the UI
+    const paidInstallments = calendarDaysCovered;
 
     // Update the loan with the recalculated paidInstallments
     // Only update if there's a change to avoid unnecessary writes
