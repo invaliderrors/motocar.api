@@ -101,6 +101,7 @@ export class NewsService {
 
     // Now iterate through days from loan start to determine final coverage
     // We need to find how many calendar days it takes to cover basePaidInstallments working days
+    // Note: The loan start date itself is NOT a payment day - payments start the day AFTER
     const loanStartDate = new Date(loan.startDate);
     let currentDate = new Date(loanStartDate);
     let workingDaysCovered = 0;
@@ -108,15 +109,16 @@ export class NewsService {
 
     // Iterate until we've covered all paid installments
     while (workingDaysCovered < basePaidInstallments) {
+      // Move to next day first (payments start the day after loan creation)
+      currentDate = addDays(currentDate, 1);
+      calendarDaysCovered++;
+      
       const dateString = format(currentDate, 'yyyy-MM-dd');
       
       // If this date is not skipped, it counts as a working day
       if (!skippedDateStrings.has(dateString)) {
         workingDaysCovered++;
       }
-      
-      calendarDaysCovered++;
-      currentDate = addDays(currentDate, 1);
     }
 
     // paidInstallments represents calendar days covered (including skipped dates)

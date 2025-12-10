@@ -112,12 +112,23 @@ export class InstallmentService extends BaseStoreService {
       orderBy: { createdAt: 'asc' },
     });
 
+    // Fetch skipped dates for this loan (from news)
+    let skippedDates: Date[] = [];
+    try {
+      const skippedDatesData = await this.newsService.getSkippedDatesForLoan(loanId);
+      skippedDates = skippedDatesData.dates.map(d => startOfDay(new Date(d)));
+    } catch (error) {
+      console.error('Error fetching skipped dates for last covered date calculation:', error);
+      // Continue without skipped dates if there's an error
+    }
+
     // Use TOTAL daily rate (base + gps) for coverage calculation
     const baseDailyRate = loan.installmentPaymentAmmount || 0;
     const gpsDailyRate = loan.gpsInstallmentPayment || 0;
     const totalDailyRate = baseDailyRate + gpsDailyRate;
     
-    const loanStartDate = startOfDay(new Date(loan.startDate));
+    // Use Colombia timezone for loan start date
+    const loanStartDate = startOfDay(toColombiaUtc(new Date(loan.startDate)));
     const downPayment = loan.downPayment || 0;
 
     // Calculate days covered by the down payment
@@ -127,31 +138,59 @@ export class InstallmentService extends BaseStoreService {
       daysCoveredByDownPayment = Math.floor(downPayment / totalDailyRate);
     }
 
-    if (existingPayments.length === 0) {
-      // No payments yet
-      if (daysCoveredByDownPayment > 0) {
-        // Down payment covers some days starting from the day AFTER loan start
-        // Use logical days (30-day months) for consistent calculation
-        return this.addLogicalDays(loanStartDate, daysCoveredByDownPayment);
-      }
-      // No down payment, last covered date is the loan start date itself (nothing covered yet)
-      return loanStartDate;
-    }
-
-    // Calculate total days covered by all payments (base + gps)
-    let totalDaysCovered = daysCoveredByDownPayment;
+    // Calculate total WORKING days covered by all payments (base + gps)
+    let totalWorkingDaysCovered = daysCoveredByDownPayment;
     for (const payment of existingPayments) {
       // Each payment's total = amount (base) + gps
       const totalPayment = (payment.amount || 0) + (payment.gps || 0);
       const daysCovered = totalPayment / totalDailyRate;
-      totalDaysCovered += daysCovered;
+      totalWorkingDaysCovered += daysCovered;
     }
 
-    // Last covered date is loan start date + total days covered
-    // Use logical days (30-day months) for consistent calculation
-    // The loan start date is NOT a payment day - payments start the day after
-    // So if you pay for 193 days starting May 19, you cover May 20 through Dec 2
-    return this.addLogicalDays(loanStartDate, Math.floor(totalDaysCovered));
+    if (totalWorkingDaysCovered === 0) {
+      // No coverage at all
+      return loanStartDate;
+    }
+
+    // Now we need to find the calendar date that corresponds to totalWorkingDaysCovered
+    // working days from the loan start date, accounting for skipped dates
+    let currentDate = loanStartDate;
+    let workingDaysCounted = 0;
+    const maxIterations = Math.floor(totalWorkingDaysCovered) * 3; // Safety limit
+    let iterations = 0;
+
+    console.log('🔍 getLastCoveredDate calculation:', {
+      loanId,
+      loanStartDate: loanStartDate.toISOString(),
+      totalWorkingDaysCovered,
+      skippedDatesCount: skippedDates.length,
+      downPayment,
+      totalDailyRate,
+      daysCoveredByDownPayment,
+    });
+
+    while (iterations < maxIterations) {
+      currentDate = addDays(currentDate, 1);
+      iterations++;
+      
+      // If this date is not skipped, it counts as a working day
+      if (!this.isDateSkipped(currentDate, skippedDates)) {
+        workingDaysCounted++;
+        
+        // If we've counted all the working days, we're done
+        if (workingDaysCounted >= Math.floor(totalWorkingDaysCovered)) {
+          break;
+        }
+      }
+    }
+
+    console.log('🔍 getLastCoveredDate result:', {
+      lastCoveredDate: currentDate.toISOString(),
+      workingDaysCounted,
+      iterations,
+    });
+
+    return currentDate;
   }
 
   /**
@@ -260,7 +299,8 @@ export class InstallmentService extends BaseStoreService {
     
     // Pass excludeInstallmentId to exclude the installment being edited
     const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan, dto.excludeInstallmentId);
-    const today = startOfDay(new Date());
+    // Use Colombia time for "today" calculation
+    const today = startOfDay(toColombiaUtc(new Date()));
 
     // Calculate coverage considering skipped dates
     // dto.amount is the TOTAL payment amount (base + gps)
