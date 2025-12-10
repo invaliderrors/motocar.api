@@ -33,10 +33,97 @@ export class NewsService {
   }
 
   /**
+   * Recalculate paidInstallments for a loan based on totalPaid and skipped dates
+   * This adjusts how many installments the money paid covers, accounting for skipped dates
+   */
+  private async recalculatePaidInstallments(loanId: string) {
+    // Get loan with all necessary data
+    const loan = await this.prisma.loan.findUnique({
+      where: { id: loanId },
+      select: {
+        id: true,
+        startDate: true,
+        totalPaid: true,
+        installmentPaymentAmmount: true,
+        gpsInstallmentPayment: true,
+        paymentFrequency: true,
+        paidInstallments: true,
+      },
+    });
+
+    if (!loan) {
+      return;
+    }
+
+    // Calculate the total daily rate (base + gps)
+    const totalDailyRate = loan.installmentPaymentAmmount + loan.gpsInstallmentPayment;
+    
+    if (totalDailyRate <= 0 || loan.totalPaid <= 0) {
+      return;
+    }
+
+    // Get all skipped dates for this loan
+    const { dates: skippedDates } = await this.getSkippedDatesForLoan(loanId);
+
+    // Calculate how many days have elapsed since loan start
+    const today = new Date();
+    const loanStartDate = new Date(loan.startDate);
+    const totalDaysElapsed = differenceInDays(today, loanStartDate);
+
+    // Count how many skipped dates fall within the elapsed period
+    const skippedDatesInPeriod = skippedDates.filter(date => {
+      const skipDate = new Date(date);
+      return skipDate >= loanStartDate && skipDate <= today;
+    }).length;
+
+    // Calculate working days (total days - skipped dates)
+    const workingDays = Math.max(0, totalDaysElapsed - skippedDatesInPeriod);
+
+    // Calculate how many installments the totalPaid covers based on working days
+    // The totalPaid includes the down payment and all subsequent payments
+    let paidInstallments = 0;
+
+    switch (loan.paymentFrequency) {
+      case 'DAILY':
+        // For daily payments: 1 working day = 1 installment
+        paidInstallments = Math.floor(loan.totalPaid / totalDailyRate);
+        break;
+      case 'WEEKLY':
+        // For weekly payments: 7 working days = 1 installment
+        const weeklyInstallments = Math.floor(loan.totalPaid / (totalDailyRate * 7));
+        paidInstallments = weeklyInstallments;
+        break;
+      case 'BIWEEKLY':
+        // For biweekly payments: 14 working days = 1 installment
+        const biweeklyInstallments = Math.floor(loan.totalPaid / (totalDailyRate * 14));
+        paidInstallments = biweeklyInstallments;
+        break;
+      case 'MONTHLY':
+        // For monthly payments: 30 working days = 1 installment
+        const monthlyInstallments = Math.floor(loan.totalPaid / (totalDailyRate * 30));
+        paidInstallments = monthlyInstallments;
+        break;
+      default:
+        // Default to daily
+        paidInstallments = Math.floor(loan.totalPaid / totalDailyRate);
+    }
+
+    // Update the loan with the recalculated paidInstallments
+    // Only update if there's a change to avoid unnecessary writes
+    if (loan.paidInstallments !== paidInstallments) {
+      await this.prisma.loan.update({
+        where: { id: loanId },
+        data: { paidInstallments },
+      });
+    }
+  }
+
+  /**
    * Create a new news item
    * - For LOAN_SPECIFIC: requires loanId, stores skipped dates instead of modifying loan
    * - For STORE_WIDE: affects all loans in the store via skipped dates
    * - Auto-generates skipped dates from date range if autoCalculateInstallments is true
+   * - Recalculates paidInstallments for affected loans based on skipped dates
    */
   async create(dto: CreateNewsDto, createdById: string) {
     // Validate loan-specific news
@@ -50,10 +137,11 @@ export class NewsService {
     }
 
     // Verify loan exists and belongs to the store
+    let loan: { id: string; storeId: string; status: string } | null = null;
     if (dto.loanId) {
-      const loan = await this.prisma.loan.findUnique({
+      loan = await this.prisma.loan.findUnique({
         where: { id: dto.loanId },
-        select: { id: true, storeId: true },
+        select: { id: true, storeId: true, status: true },
       });
 
       if (!loan) {
@@ -136,6 +224,27 @@ export class NewsService {
         createdBy: true,
       },
     });
+
+    // Recalculate paidInstallments for affected loans
+    if (dto.loanId && loan && loan.status !== 'COMPLETED') {
+      // For loan-specific news, recalculate only that loan
+      await this.recalculatePaidInstallments(dto.loanId);
+    } else if (dto.type === NewsType.STORE_WIDE) {
+      // For store-wide news, recalculate all active loans in the store
+      const affectedLoans = await this.prisma.loan.findMany({
+        where: {
+          storeId: dto.storeId,
+          status: { not: 'COMPLETED' },
+          archived: false,
+        },
+        select: { id: true },
+      });
+
+      // Recalculate in parallel for performance
+      await Promise.all(
+        affectedLoans.map(loan => this.recalculatePaidInstallments(loan.id))
+      );
+    }
 
     return news;
   }
@@ -417,7 +526,7 @@ export class NewsService {
       updateData.skippedDates = skippedDates;
     }
 
-    return this.prisma.news.update({
+    const updatedNews = await this.prisma.news.update({
       where: { id },
       data: updateData,
       include: {
@@ -431,26 +540,76 @@ export class NewsService {
         createdBy: true,
       },
     });
+
+    // Recalculate paidInstallments for affected loans when news is updated
+    // This handles changes to dates, isActive status, or recurring settings
+    if (existingNews.loanId && existingNews.type === NewsType.LOAN_SPECIFIC) {
+      // For loan-specific news, recalculate that specific loan
+      await this.recalculatePaidInstallments(existingNews.loanId);
+    } else if (existingNews.type === NewsType.STORE_WIDE) {
+      // For store-wide news, recalculate all active loans in the store
+      const affectedLoans = await this.prisma.loan.findMany({
+        where: {
+          storeId: existingNews.storeId,
+          status: { not: 'COMPLETED' },
+          archived: false,
+        },
+        select: { id: true },
+      });
+
+      await Promise.all(
+        affectedLoans.map(loan => this.recalculatePaidInstallments(loan.id))
+      );
+    }
+
+    return updatedNews;
   }
 
   /**
    * Delete a news item
-   * Simply deletes the news - no loan modification needed
+   * Deletes the news and recalculates paidInstallments for affected loans
    */
   async remove(id: string) {
     const news = await this.prisma.news.findUnique({
       where: { id },
+      select: {
+        id: true,
+        type: true,
+        loanId: true,
+        storeId: true,
+      },
     });
 
     if (!news) {
       throw new NotFoundException('News not found');
     }
 
-    // Simply delete the news - skipped dates are stored in the news record
-    // No loan modification needed
-    return this.prisma.news.delete({
+    // Delete the news
+    await this.prisma.news.delete({
       where: { id },
     });
+
+    // Recalculate paidInstallments for affected loans after deletion
+    if (news.loanId && news.type === NewsType.LOAN_SPECIFIC) {
+      // For loan-specific news, recalculate that specific loan
+      await this.recalculatePaidInstallments(news.loanId);
+    } else if (news.type === NewsType.STORE_WIDE) {
+      // For store-wide news, recalculate all active loans in the store
+      const affectedLoans = await this.prisma.loan.findMany({
+        where: {
+          storeId: news.storeId,
+          status: { not: 'COMPLETED' },
+          archived: false,
+        },
+        select: { id: true },
+      });
+
+      await Promise.all(
+        affectedLoans.map(loan => this.recalculatePaidInstallments(loan.id))
+      );
+    }
+
+    return news;
   }
 
   /**
