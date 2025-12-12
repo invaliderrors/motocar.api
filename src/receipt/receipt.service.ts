@@ -100,7 +100,9 @@ export class ReceiptService {
     if (paymentType === 'advance') {
       // Use pre-calculated daysAhead from frontend if available
       if (dto.daysAhead !== undefined && dto.daysAhead !== null) {
-        daysInAdvance = dto.daysAhead;
+        // daysAhead from frontend is negative for advance, convert to positive
+        // Ensure it's a number and round to 1 decimal place
+        daysInAdvance = Math.abs(Number(dto.daysAhead));
       } else if (dto.advancePaymentDate) {
         // Fallback to calculating if not provided
         daysInAdvance = this.calculateDaysInAdvance(new Date(), new Date(dto.advancePaymentDate));
@@ -122,7 +124,8 @@ export class ReceiptService {
     } else if (paymentType === 'late') {
       // Use pre-calculated daysBehind from frontend if available
       if (dto.daysBehind !== undefined && dto.daysBehind !== null) {
-        daysSinceLastPayment = dto.daysBehind;
+        // Ensure it's a number
+        daysSinceLastPayment = Number(dto.daysBehind);
       } else if (dto.lastPaymentDate) {
         // Fallback to calculating if not provided
         daysSinceLastPayment = this.calculateDaysSinceLastPayment(dto.lastPaymentDate);
@@ -184,16 +187,17 @@ export class ReceiptService {
       paymentTypeLabel = "PAGO ATRASADO";
       if (daysSinceLastPayment === 0) {
         paymentDaysStatus = "Estado: Vence hoy";
-      } else if (daysSinceLastPayment === 1) {
-        paymentDaysStatus = "Estado: 1 día atrasado";
       } else {
-        paymentDaysStatus = `Estado: ${daysSinceLastPayment} días atrasado`;
+        // Format days with one decimal place for consistency
+        const daysFormatted = daysSinceLastPayment.toFixed(1);
+        paymentDaysStatus = `Estado: ${daysFormatted} día${daysSinceLastPayment !== 1 ? 's' : ''} atrasado`;
       }
       messageBottom = "Recuerda mantener tus pagos al día para evitar cargos adicionales.";
     } else if (paymentType === 'advance' && daysInAdvance !== null) {
       paymentTypeLabel = "PAGO ADELANTADO";
-      // Show negative days to indicate advance payment
-      paymentDaysStatus = `Estado: ${-daysInAdvance} día${daysInAdvance !== 1 ? 's' : ''} (adelantado)`;
+      // Format days with one decimal place, show as positive value
+      const daysFormatted = daysInAdvance.toFixed(1);
+      paymentDaysStatus = `Estado: ${daysFormatted} día${daysInAdvance !== 1 ? 's' : ''} (adelantado)`;
       
       // Show installments covered if calculated
       if (installmentsInAdvance > 0) {
