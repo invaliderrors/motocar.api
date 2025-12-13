@@ -31,6 +31,7 @@ import { PermissionsModule } from './permissions/permissions.module';
 import { StoreModule } from './store/store.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { NewsModule } from './news/news.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { NewsModule } from './news/news.module';
     PrismaModule,
     AuthModule,
     PermissionsModule,
+    AuditModule,
     UserModule,
     StoreModule,
     LoanModule,

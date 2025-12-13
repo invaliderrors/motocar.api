@@ -12,6 +12,7 @@ export enum Resource {
   REPORT = 'REPORT',             // Reportes
   VEHICLE = 'VEHICLE',           // Vehículos
   USER = 'USER',                 // Usuarios
+  AUDIT_LOG = 'AUDIT_LOG',       // Registros de Auditoría
 }
 
 export enum Action {
@@ -43,6 +44,7 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, PermissionsMap> = {
     [Resource.REPORT]: [Action.VIEW],  // Reports are read-only
     [Resource.VEHICLE]: [Action.CREATE, Action.EDIT, Action.DELETE],
     [Resource.USER]: [Action.CREATE, Action.EDIT, Action.DELETE],
+    [Resource.AUDIT_LOG]: [Action.VIEW],  // Audit logs are read-only
   } as PermissionsMap,
   
   // EMPLOYEE permissions - no default permissions, must be explicitly granted
