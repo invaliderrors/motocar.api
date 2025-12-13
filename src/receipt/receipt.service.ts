@@ -165,12 +165,13 @@ export class ReceiptService {
       cuotasRestanteInfo = `CUOTAS ATRASADAS: ${installmentsOwedFormatted}`;
       
       // Calculate debt for the days owed (not total remaining debt)
-      if (dto.debtRemaining !== undefined && installmentsOwed > 0) {
+      if (installmentsOwed > 0) {
         const amountPerInstallment = (dto.amount || 0);
         const gpsPerInstallment = (dto.gps || 0);
         
         const owedMotoDebt = installmentsOwed * amountPerInstallment;
         const owedGpsDebt = installmentsOwed * gpsPerInstallment;
+        const totalOwed = owedMotoDebt + owedGpsDebt;
         
         saldoRestanteMoto = `MOTO ATRASADO: ${this.formatCurrency(owedMotoDebt)}`;
         saldoRestanteGps = `GPS ATRASADO: ${this.formatCurrency(owedGpsDebt)}`;
@@ -190,7 +191,26 @@ export class ReceiptService {
       } else {
         // Format days with one decimal place for consistency
         const daysFormatted = daysSinceLastPayment.toFixed(1);
-        paymentDaysStatus = `Estado: ${daysFormatted} día${daysSinceLastPayment !== 1 ? 's' : ''} atrasado`;
+        
+        // Calculate total amount owed based on days behind
+        let installmentsOwed = 0;
+        if (dto.paymentFrequency === 'DAILY') {
+          installmentsOwed = daysSinceLastPayment;
+        } else if (dto.paymentFrequency === 'WEEKLY') {
+          installmentsOwed = Math.floor(daysSinceLastPayment / 7 * 10) / 10;
+        } else if (dto.paymentFrequency === 'BIWEEKLY') {
+          installmentsOwed = Math.floor(daysSinceLastPayment / 14 * 10) / 10;
+        } else if (dto.paymentFrequency === 'MONTHLY') {
+          installmentsOwed = Math.floor(daysSinceLastPayment / 30 * 10) / 10;
+        } else {
+          installmentsOwed = daysSinceLastPayment;
+        }
+        
+        const amountPerInstallment = (dto.amount || 0);
+        const gpsPerInstallment = (dto.gps || 0);
+        const totalOwed = (installmentsOwed * amountPerInstallment) + (installmentsOwed * gpsPerInstallment);
+        
+        paymentDaysStatus = `Estado: ${daysFormatted} día${daysSinceLastPayment !== 1 ? 's' : ''} atrasado - Debe ${this.formatCurrency(totalOwed)} para estar al día`;
       }
       messageBottom = "Recuerda mantener tus pagos al día para evitar cargos adicionales.";
     } else if (paymentType === 'advance' && daysInAdvance !== null) {
