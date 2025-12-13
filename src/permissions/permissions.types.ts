@@ -10,6 +10,7 @@ export enum Resource {
   NEWS = 'NEWS',                 // Novedades
   PROVIDER = 'PROVIDER',         // Proveedores
   REPORT = 'REPORT',             // Reportes
+  VEHICLE = 'VEHICLE',           // Vehículos
 }
 
 export enum Action {
@@ -39,6 +40,7 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, PermissionsMap> = {
     [Resource.NEWS]: [Action.CREATE, Action.EDIT, Action.DELETE],
     [Resource.PROVIDER]: [Action.CREATE, Action.EDIT, Action.DELETE],
     [Resource.REPORT]: [Action.VIEW],  // Reports are read-only
+    [Resource.VEHICLE]: [Action.CREATE, Action.EDIT, Action.DELETE],
   } as PermissionsMap,
   
   // EMPLOYEE permissions - no default permissions, must be explicitly granted

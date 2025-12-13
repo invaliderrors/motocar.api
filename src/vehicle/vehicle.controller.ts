@@ -56,7 +56,7 @@ export class VehicleController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.EMPLOYEE)
   @LogAction(ActionType.DELETE, 'Vehicle')
   remove(@Param('id') id: string, @UserStoreId() userStoreId: string | null) {
     return this.service.remove(id, userStoreId);

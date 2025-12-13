@@ -152,8 +152,8 @@ model Vehicle {
   color        String?
   cc           Int?
   gps          Float?
-  soatDueDate  DateTime?     // SOAT (insurance) expiration date
-  technomechDueDate DateTime? // Technomechanical inspection expiration date
+  soatDueDate  String?     // SOAT (insurance) expiration date
+  technomechDueDate String? // Technomechanical inspection expiration date
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 

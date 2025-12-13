@@ -11,12 +11,10 @@ export class VehicleService extends BaseStoreService {
   }
 
   create(dto: CreateVehicleDto, storeId: string) {
-    const { storeId: _, providerId, soatDueDate, technomechDueDate, ...data } = dto;
+    const { storeId: _, providerId, ...data } = dto;
     return this.prisma.vehicle.create({ 
       data: {
         ...data,
-        soatDueDate: soatDueDate ? new Date(soatDueDate) : undefined,
-        technomechDueDate: technomechDueDate ? new Date(technomechDueDate) : undefined,
         store: { connect: { id: storeId } },
         provider: { connect: { id: providerId } },
       } 
@@ -134,14 +132,9 @@ export class VehicleService extends BaseStoreService {
 
   async update(id: string, dto: UpdateVehicleDto, userStoreId: string | null) {
     await this.findOne(id, userStoreId);
-    const { soatDueDate, technomechDueDate, ...data } = dto;
     return this.prisma.vehicle.update({ 
       where: { id }, 
-      data: {
-        ...data,
-        soatDueDate: soatDueDate ? new Date(soatDueDate) : undefined,
-        technomechDueDate: technomechDueDate ? new Date(technomechDueDate) : undefined,
-      }
+      data: dto
     });
   }
 

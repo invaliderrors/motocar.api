@@ -57,11 +57,11 @@ export class CreateVehicleDto {
   gps?: number;
 
   @IsOptional()
-  @IsDateString()
+  @IsString()
   soatDueDate?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsString()
   technomechDueDate?: string;
 }
 
