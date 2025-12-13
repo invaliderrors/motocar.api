@@ -55,7 +55,7 @@ export class UserController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.EMPLOYEE)
   @LogAction(ActionType.DELETE, 'User')
   remove(@Param('id') id: string, @UserStoreId() userStoreId: string | null) {
     return this.service.remove(id, userStoreId);
