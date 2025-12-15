@@ -4,11 +4,20 @@ import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 const timeZone = 'America/Bogota';
 
 export function toColombiaMidnightUtc(date: string | Date): Date {
-  const zoned = new Date(
-    new Date(date).toLocaleString('en-US', { timeZone: 'America/Bogota' })
-  )
-  zoned.setHours(0, 0, 0, 0)
-  return zonedTimeToUtc(zoned, 'America/Bogota')
+  // Parse the input date and extract date components
+  const inputDate = new Date(date);
+  
+  // Extract year, month, and day from the input (treating it as the intended calendar date)
+  // When date is "2025-12-15T00:00:00.000Z", we want to keep Dec 15, not convert to Dec 14
+  const year = inputDate.getUTCFullYear();
+  const month = inputDate.getUTCMonth();
+  const day = inputDate.getUTCDate();
+  
+  // Create a new date at midnight in local time with those components
+  const localDate = new Date(year, month, day, 0, 0, 0, 0);
+  
+  // Convert to UTC treating it as Colombia time
+  return zonedTimeToUtc(localDate, 'America/Bogota');
 }
 
 
