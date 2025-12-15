@@ -162,13 +162,23 @@ export class InstallmentService extends BaseStoreService {
     }
 
     if (totalWorkingDaysCovered === 0) {
-      // No coverage at all
+      // No coverage at all - return the loan start date itself
+      // The start date is covered by default, next payment starts from day after
       return loanStartDate;
     }
 
     // Now we need to find the date that corresponds to totalWorkingDaysCovered
     // working days from the loan start date, using LOGICAL DAYS (30-day months)
     // and accounting for skipped dates
+    //
+    // IMPORTANT: The loan start date is ALREADY COVERED (day 0, free).
+    // Payments cover days AFTER the start date. So if you pay for N days:
+    // - Start date: Dec 4 (covered for free, day 0)
+    // - 1 day paid: covers Dec 5 (day 1) → last covered = Dec 5
+    // - 10 days paid: covers Dec 5-14 (days 1-10) → last covered = Dec 14
+    // - Since start date is day 0, we add totalWorkingDaysCovered to get last covered
+    // - But we also add 1 because the start date itself takes up position 0
+    // Therefore: lastCoveredDate = startDate + 1 + (totalWorkingDaysCovered - 1) = startDate + totalWorkingDaysCovered
     const fullDaysToCount = Math.floor(totalWorkingDaysCovered);
 
     console.log('🔍 getLastCoveredDate calculation:', {
@@ -183,8 +193,12 @@ export class InstallmentService extends BaseStoreService {
     });
 
     // Use addLogicalDays to add the full days using 30-day month logic
-    // This ensures consistency with coverage calculations
-    let lastCoveredDate = this.addLogicalDays(loanStartDate, fullDaysToCount);
+    // The start date is considered "day 0" and is already covered (free)
+    // When you pay for N days, including the start date, the coverage is:
+    // Start Dec 4 (free) + pay 10 days = covers Dec 4-14 (start + 10 more days = 11 total)
+    // User expects: Dec 5-15 when paying 10 installments from Dec 5 onwards
+    // So we need: addLogicalDays(Dec 4, 10 + 1) = Dec 15
+    let lastCoveredDate = this.addLogicalDays(loanStartDate, fullDaysToCount + 1);
     
     // Now adjust for skipped dates by extending the coverage
     // Count how many skipped dates fall between loanStartDate and lastCoveredDate
