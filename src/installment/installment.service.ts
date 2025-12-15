@@ -27,10 +27,12 @@ export class InstallmentService extends BaseStoreService {
    * Add logical days to a date using the 30-day-per-month convention.
    * This ensures consistent calculations: 1 month = 30 days exactly.
    * 
-   * For example, May 19 + 193 days:
-   * - May has 12 days remaining (19-30)
-   * - 193 - 12 = 181, then 181 / 30 = 6 full months + 1 day
-   * - Result: May 19 + 6 months + 1 day = December 1
+   * IMPORTANT: Days 31 are normalized to day 30 (since we use 30-day months)
+   * 
+   * For example, May 31 + 194 days:
+   * - First normalize: May 31 → May 30 (day 0 remaining in month)
+   * - Move to June 1, then 194 - 1 = 193 days remaining
+   * - June 1 + 193 days = December 14
    */
   private addLogicalDays(startDate: Date, daysToAdd: number): Date {
     if (daysToAdd <= 0) return startDate;
@@ -38,8 +40,14 @@ export class InstallmentService extends BaseStoreService {
     const date = new Date(startDate);
     let remainingDays = daysToAdd;
     
+    // Normalize: if current day is 31, treat it as day 30 (end of month in 30-day system)
+    let currentDay = date.getDate();
+    if (currentDay > DAYS_PER_MONTH) {
+      currentDay = DAYS_PER_MONTH;
+      date.setDate(DAYS_PER_MONTH);
+    }
+    
     // Calculate remaining days in the current month (using 30-day month)
-    const currentDay = date.getDate();
     const daysLeftInMonth = DAYS_PER_MONTH - currentDay;
     
     if (remainingDays <= daysLeftInMonth) {
@@ -48,24 +56,23 @@ export class InstallmentService extends BaseStoreService {
       return date;
     }
     
-    // Move to the end of current month (day 30)
-    remainingDays -= daysLeftInMonth;
-    date.setDate(DAYS_PER_MONTH);
+    // Move to the first day of next month
+    remainingDays -= (daysLeftInMonth + 1); // +1 to account for moving to day 1 of next month
+    date.setMonth(date.getMonth() + 1);
+    date.setDate(1);
     
     // Add full months
     const fullMonths = Math.floor(remainingDays / DAYS_PER_MONTH);
     remainingDays = remainingDays % DAYS_PER_MONTH;
     
     // Move forward by full months
-    date.setMonth(date.getMonth() + fullMonths);
+    if (fullMonths > 0) {
+      date.setMonth(date.getMonth() + fullMonths);
+    }
     
-    // Add remaining days to the first day of the next month
+    // Add remaining days
     if (remainingDays > 0) {
-      date.setMonth(date.getMonth() + 1);
-      date.setDate(remainingDays);
-    } else if (fullMonths > 0) {
-      // If we added full months but no remaining days, we're at day 30 of the last month
-      date.setDate(DAYS_PER_MONTH);
+      date.setDate(date.getDate() + remainingDays);
     }
     
     return date;
