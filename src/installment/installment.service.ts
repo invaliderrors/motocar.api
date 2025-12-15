@@ -59,10 +59,13 @@ export class InstallmentService extends BaseStoreService {
     // Move forward by full months
     date.setMonth(date.getMonth() + fullMonths);
     
-    // Add remaining days (moving to next month if needed)
+    // Add remaining days to the first day of the next month
     if (remainingDays > 0) {
       date.setMonth(date.getMonth() + 1);
       date.setDate(remainingDays);
+    } else if (fullMonths > 0) {
+      // If we added full months but no remaining days, we're at day 30 of the last month
+      date.setDate(DAYS_PER_MONTH);
     }
     
     return date;
@@ -156,14 +159,10 @@ export class InstallmentService extends BaseStoreService {
       return loanStartDate;
     }
 
-    // Now we need to find the calendar date that corresponds to totalWorkingDaysCovered
-    // working days from the loan start date, accounting for skipped dates
-    // We count full working days, and the fractional part is handled later
-    let currentDate = loanStartDate;
-    let workingDaysCounted = 0;
+    // Now we need to find the date that corresponds to totalWorkingDaysCovered
+    // working days from the loan start date, using LOGICAL DAYS (30-day months)
+    // and accounting for skipped dates
     const fullDaysToCount = Math.floor(totalWorkingDaysCovered);
-    const maxIterations = fullDaysToCount * 3; // Safety limit
-    let iterations = 0;
 
     console.log('🔍 getLastCoveredDate calculation:', {
       loanId,
@@ -176,26 +175,27 @@ export class InstallmentService extends BaseStoreService {
       daysCoveredByDownPayment,
     });
 
-    // Count full working days
-    while (workingDaysCounted < fullDaysToCount && iterations < maxIterations) {
-      currentDate = addDays(currentDate, 1);
-      iterations++;
-      
-      // If this date is not skipped, it counts as a working day
-      if (!this.isDateSkipped(currentDate, skippedDates)) {
-        workingDaysCounted++;
-      }
+    // Use addLogicalDays to add the full days using 30-day month logic
+    // This ensures consistency with coverage calculations
+    let lastCoveredDate = this.addLogicalDays(loanStartDate, fullDaysToCount);
+    
+    // Now adjust for skipped dates by extending the coverage
+    // Count how many skipped dates fall between loanStartDate and lastCoveredDate
+    const skippedInRange = this.countSkippedDatesInRange(loanStartDate, lastCoveredDate, skippedDates);
+    if (skippedInRange > 0) {
+      // Extend coverage by the number of skipped dates
+      lastCoveredDate = this.addLogicalDays(lastCoveredDate, skippedInRange);
     }
 
     console.log('🔍 getLastCoveredDate result:', {
-      lastCoveredDate: currentDate.toISOString(),
-      workingDaysCounted,
+      lastCoveredDate: lastCoveredDate.toISOString(),
+      fullDaysToCount,
       totalWorkingDaysCovered,
       fractionalPart: totalWorkingDaysCovered - fullDaysToCount,
-      iterations,
+      skippedInRange,
     });
 
-    return currentDate;
+    return lastCoveredDate;
   }
 
   /**
@@ -401,6 +401,10 @@ export class InstallmentService extends BaseStoreService {
     
     if (wholeDays > 0) {
       // If at least 1 full day, calculate normally
+      // If paying for N days starting from coverageStartDate, it covers N days total
+      // So we add (N-1) days to coverageStartDate to get the last day covered
+      // Example: coverageStartDate = July 3, pay for 161 days → July 3 + 160 days = December 11
+      // But we want July 3 to be day 1, so covering 161 days means through December 11
       coverageEndDate = this.addLogicalDays(coverageStartDate, wholeDays - 1);
     } else if (daysCovered > 0) {
       // For fractional days less than 1, the coverage end date is the start date itself
