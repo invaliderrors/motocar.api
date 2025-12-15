@@ -235,7 +235,15 @@ export class InstallmentService extends BaseStoreService {
     // Payment is late if the coverage start date is before or equal to today
     // Because if today = Dec 15 and loan is only covered until Dec 14,
     // the payment should start covering Dec 15 (today), which means it's late
-    const today = startOfDay(toColombiaUtc(new Date()));
+    const systemDate = new Date();
+    const colombiaDate = toColombiaUtc(systemDate);
+    const today = startOfDay(colombiaDate);
+    console.log('🕐 Date check in calculatePaymentCoverage:', {
+      systemDate: systemDate.toISOString(),
+      colombiaDate: colombiaDate.toISOString(),
+      today: today.toISOString(),
+      coverageStartDate: coverageStartDate.toISOString(),
+    });
     const isLate = coverageStartDate <= today;
 
     // If late, the latePaymentDate is the coverage start date (when it should have been paid)
@@ -315,7 +323,14 @@ export class InstallmentService extends BaseStoreService {
     // Pass excludeInstallmentId to exclude the installment being edited
     const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan, dto.excludeInstallmentId);
     // Use Colombia time for "today" calculation
-    const today = startOfDay(toColombiaUtc(new Date()));
+    const systemDate = new Date();
+    const colombiaDate = toColombiaUtc(systemDate);
+    const today = startOfDay(colombiaDate);
+    console.log('🕐 Date check in calculatePaymentCoverageDto:', {
+      systemDate: systemDate.toISOString(),
+      colombiaDate: colombiaDate.toISOString(),
+      today: today.toISOString(),
+    });
 
     // Calculate coverage considering skipped dates
     // dto.amount is the TOTAL payment amount (base + gps)
@@ -516,7 +531,14 @@ export class InstallmentService extends BaseStoreService {
 
     // For advance payments, check if coverage end date is after or equal to today
     // This ensures that even fractional payments (0.5 days) show as advance when user is up to date
-    const today = startOfDay(toColombiaUtc(new Date()));
+    const systemDate = new Date();
+    const colombiaDate = toColombiaUtc(systemDate);
+    const today = startOfDay(colombiaDate);
+    console.log('🕐 Date check in create method:', {
+      systemDate: systemDate.toISOString(),
+      colombiaDate: colombiaDate.toISOString(),
+      today: today.toISOString(),
+    });
     const isAdvance = dto.isAdvance !== undefined 
       ? dto.isAdvance 
       : (coverage.coverageEndDate >= today);
