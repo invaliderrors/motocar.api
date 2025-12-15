@@ -235,7 +235,7 @@ export class InstallmentService extends BaseStoreService {
     // Payment is late if the coverage start date is before or equal to today
     // Because if today = Dec 15 and loan is only covered until Dec 14,
     // the payment should start covering Dec 15 (today), which means it's late
-    const today = startOfDay(new Date());
+    const today = startOfDay(toColombiaUtc(new Date()));
     const isLate = coverageStartDate <= today;
 
     // If late, the latePaymentDate is the coverage start date (when it should have been paid)
@@ -516,7 +516,7 @@ export class InstallmentService extends BaseStoreService {
 
     // For advance payments, check if coverage end date is after or equal to today
     // This ensures that even fractional payments (0.5 days) show as advance when user is up to date
-    const today = startOfDay(new Date());
+    const today = startOfDay(toColombiaUtc(new Date()));
     const isAdvance = dto.isAdvance !== undefined 
       ? dto.isAdvance 
       : (coverage.coverageEndDate >= today);
@@ -712,7 +712,7 @@ export class InstallmentService extends BaseStoreService {
 
     // Calculate current days behind/ahead for each unique loan
     const loanStatusCache = new Map<string, { currentDaysBehind: number; lastCoveredDate: Date }>();
-    const today = startOfDay(new Date());
+    const today = startOfDay(toColombiaUtc(new Date()));
 
     for (const installment of data) {
       const loanId = installment.loanId;
