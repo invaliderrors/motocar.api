@@ -514,7 +514,10 @@ export class InstallmentService extends BaseStoreService {
     }
     
     // Calculate payment coverage based on TOTAL amount (base + gps), considering skipped dates
-    const paymentDate = dto.paymentDate ? new Date(dto.paymentDate) : new Date();
+    // Parse paymentDate at midnight Colombia time if provided, otherwise use current time
+    const paymentDate = dto.paymentDate 
+      ? toColombiaMidnightUtc(dto.paymentDate) 
+      : new Date();
     const coverage = this.calculatePaymentCoverageWithSkippedDates(
       totalPaymentAmount,
       totalDailyRate,
@@ -526,8 +529,8 @@ export class InstallmentService extends BaseStoreService {
     // Determine if late/advance: use automatic calculation if not explicitly provided
     const isLate = dto.isLate !== undefined ? dto.isLate : coverage.isLate;
     const latePaymentDate = dto.latePaymentDate 
-      ? toColombiaUtc(dto.latePaymentDate) 
-      : (coverage.latePaymentDate ? toColombiaUtc(coverage.latePaymentDate) : null);
+      ? toColombiaMidnightUtc(dto.latePaymentDate) 
+      : (coverage.latePaymentDate ? toColombiaMidnightUtc(coverage.latePaymentDate) : null);
 
     // For advance payments, check if coverage end date is after or equal to today
     // This ensures that even fractional payments (0.5 days) show as advance when user is up to date
@@ -545,8 +548,8 @@ export class InstallmentService extends BaseStoreService {
     // Always store the coverage end date as advancePaymentDate (represents last day covered by this payment)
     // This is needed for display even when the payment doesn't put the client ahead
     const advancePaymentDate = dto.advancePaymentDate 
-      ? toColombiaUtc(dto.advancePaymentDate) 
-      : toColombiaUtc(coverage.coverageEndDate);
+      ? toColombiaMidnightUtc(dto.advancePaymentDate) 
+      : toColombiaMidnightUtc(coverage.coverageEndDate);
 
     const installment = await this.prisma.installment.create({
       data: {
@@ -554,7 +557,7 @@ export class InstallmentService extends BaseStoreService {
         loan: { connect: { id: dto.loanId } },
         amount: dto.amount,
         gps: dto.gps,
-        paymentDate: toColombiaUtc(paymentDate),
+        paymentDate: paymentDate, // Already converted to midnight Colombia UTC above
         latePaymentDate: latePaymentDate,
         isAdvance: isAdvance,
         advancePaymentDate: advancePaymentDate,
@@ -895,18 +898,18 @@ export class InstallmentService extends BaseStoreService {
       updatedAt: toColombiaUtc(new Date()),
     };
 
-    // Handle paymentDate - convert to Colombia UTC if provided
+    // Handle paymentDate - convert to midnight Colombia UTC if provided
     if (paymentDate !== undefined) {
-      updateData.paymentDate = toColombiaUtc(paymentDate);
+      updateData.paymentDate = toColombiaMidnightUtc(paymentDate);
       console.log('📅 Converting paymentDate:', {
         original: paymentDate,
         converted: updateData.paymentDate
       });
     }
 
-    // Handle latePaymentDate - convert to Colombia UTC if provided, null if explicitly null
+    // Handle latePaymentDate - convert to midnight Colombia UTC if provided, null if explicitly null
     if (latePaymentDate !== undefined) {
-      updateData.latePaymentDate = latePaymentDate ? toColombiaUtc(latePaymentDate) : null;
+      updateData.latePaymentDate = latePaymentDate ? toColombiaMidnightUtc(latePaymentDate) : null;
     }
 
     // Handle createdBy relationship if provided
