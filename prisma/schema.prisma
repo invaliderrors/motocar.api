@@ -197,6 +197,7 @@ model Loan {
   startDate                 DateTime   @default(now())
   endDate                   DateTime?
   status                    LoanStatus @default(PENDING)
+  lastCoveredDate           DateTime?  // Last date covered by payments (downpayment + installments)
 
   // Relaciones
   payments Installment[]

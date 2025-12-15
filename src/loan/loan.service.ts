@@ -127,6 +127,20 @@ export class LoanService extends BaseStoreService {
     const nextNumber = totalLoans + 1;
     const contractNumber = `C${String(nextNumber).padStart(6, '0')}`;
 
+    // Calculate initial covered date based on downpayment
+    const totalDailyRate = installmentPaymentAmmount + (dto.gpsInstallmentPayment || 0);
+    let lastCoveredDate: Date | null = null;
+    
+    if (dto.downPayment > 0 && totalDailyRate > 0) {
+      const daysCoveredByDownPayment = dto.downPayment / totalDailyRate;
+      const fullDays = Math.floor(daysCoveredByDownPayment);
+      
+      if (fullDays > 0) {
+        // Use the same 30-day month logic as installments
+        lastCoveredDate = this.addLogicalDays(startDate, fullDays);
+      }
+    }
+
     return this.prisma.loan.create({
       data: {
         contractNumber,
@@ -147,12 +161,60 @@ export class LoanService extends BaseStoreService {
         debtRemaining,
         startDate,
         endDate,
+        lastCoveredDate,
       },
       include: {
         user: true,
         vehicle: true,
       },
     });
+  }
+
+  /**
+   * Add logical days to a date using 30-day month logic.
+   * Same logic as in InstallmentService.
+   */
+  private addLogicalDays(startDate: Date, daysToAdd: number): Date {
+    const DAYS_PER_MONTH = 30;
+    if (daysToAdd <= 0) return startDate;
+    
+    const date = new Date(startDate);
+    let remainingDays = daysToAdd;
+    
+    // Normalize: if current day is 31, treat it as day 30
+    let currentDay = date.getDate();
+    if (currentDay > DAYS_PER_MONTH) {
+      currentDay = DAYS_PER_MONTH;
+      date.setDate(DAYS_PER_MONTH);
+    }
+    
+    // Calculate remaining days in the current month
+    const daysLeftInMonth = DAYS_PER_MONTH - currentDay;
+    
+    if (remainingDays <= daysLeftInMonth) {
+      date.setDate(currentDay + remainingDays);
+      return date;
+    }
+    
+    // Move to the first day of next month
+    remainingDays -= (daysLeftInMonth + 1);
+    date.setMonth(date.getMonth() + 1);
+    date.setDate(1);
+    
+    // Add full months
+    const fullMonths = Math.floor(remainingDays / DAYS_PER_MONTH);
+    remainingDays = remainingDays % DAYS_PER_MONTH;
+    
+    if (fullMonths > 0) {
+      date.setMonth(date.getMonth() + fullMonths);
+    }
+    
+    // Add remaining days
+    if (remainingDays > 0) {
+      date.setDate(date.getDate() + remainingDays);
+    }
+    
+    return date;
   }
 
 

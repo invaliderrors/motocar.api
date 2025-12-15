@@ -557,6 +557,9 @@ export class InstallmentService extends BaseStoreService {
         ? LoanStatus.COMPLETED
         : LoanStatus.ACTIVE;
 
+    // Calculate new lastCoveredDate after this payment
+    const newLastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
+
     await this.prisma.loan.update({
       where: { id: loan.id },
       data: {
@@ -565,6 +568,7 @@ export class InstallmentService extends BaseStoreService {
         totalPaid: updatedTotalPaid,
         debtRemaining: updatedDebt,
         status: newStatus,
+        lastCoveredDate: newLastCoveredDate,
       },
     });
 
@@ -926,6 +930,9 @@ export class InstallmentService extends BaseStoreService {
         ? LoanStatus.COMPLETED
         : LoanStatus.ACTIVE;
 
+    // Recalculate lastCoveredDate after removing this installment
+    const newLastCoveredDate = await this.getLastCoveredDate(loan.id, loan, id);
+
     await this.prisma.loan.update({
       where: { id: loan.id },
       data: {
@@ -934,6 +941,7 @@ export class InstallmentService extends BaseStoreService {
         totalPaid: updatedTotalPaid,
         debtRemaining: updatedDebt,
         status: newStatus,
+        lastCoveredDate: newLastCoveredDate,
       },
     });
 
