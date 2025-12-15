@@ -319,11 +319,22 @@ export class InstallmentService extends BaseStoreService {
     );
 
     // Calculate days behind/ahead, excluding skipped dates
-    // effectiveDaysFromLastCoveredToToday = days from lastCoveredDate to today
-    // If lastCoveredDate = Dec 3 and today = Dec 4, effectiveDays = 1 (owes Dec 4)
-    // If lastCoveredDate = Dec 4 and today = Dec 4, effectiveDays = 0 (up to date)
+    // effectiveDaysFromLastCoveredToToday = days from lastCoveredDate to today (inclusive)
+    // If lastCoveredDate = Dec 14 and today = Dec 15, effectiveDays = 1 (owes Dec 15)
+    // If lastCoveredDate = Dec 15 and today = Dec 15, effectiveDays = 0 (up to date - paid through today)
+    // NOTE: "Up to date" means paid THROUGH today, not just TO today
     const effectiveDaysFromLastCoveredToToday = this.calculateEffectiveDays(lastCoveredDate, today, skippedDates);
     const daysBehind = Math.max(0, effectiveDaysFromLastCoveredToToday);
+    
+    console.log('📊 Payment coverage calculation:', {
+      loanId: dto.loanId,
+      lastCoveredDate: lastCoveredDate.toISOString(),
+      today: today.toISOString(),
+      effectiveDaysFromLastCoveredToToday,
+      daysBehind,
+      paymentDaysCovered: coverage.daysCovered,
+      willBeAheadAfterPayment: coverage.daysCovered - daysBehind,
+    });
     
     // Calculate amount needed to catch up to today (only for non-skipped days)
     const amountNeededToCatchUp = daysBehind * totalDailyRate;
