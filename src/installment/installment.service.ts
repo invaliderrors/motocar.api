@@ -232,9 +232,11 @@ export class InstallmentService extends BaseStoreService {
     // (fractional days round down for the end date)
     const coverageEndDate = this.addLogicalDays(coverageStartDate, Math.floor(daysCovered) - 1);
 
-    // Payment is late if the coverage start date is before today
+    // Payment is late if the coverage start date is before or equal to today
+    // Because if today = Dec 15 and loan is only covered until Dec 14,
+    // the payment should start covering Dec 15 (today), which means it's late
     const today = startOfDay(new Date());
-    const isLate = coverageStartDate < today;
+    const isLate = coverageStartDate <= today;
 
     // If late, the latePaymentDate is the coverage start date (when it should have been paid)
     const latePaymentDate = isLate ? coverageStartDate : null;
@@ -429,9 +431,11 @@ export class InstallmentService extends BaseStoreService {
       coverageEndDate = this.addLogicalDays(coverageEndDate, skippedInRange);
     }
 
-    // Payment is late if the coverage start date is before today
+    // Payment is late if the coverage start date is before or equal to today
+    // Because if today = Dec 15 and loan is only covered until Dec 14,
+    // the payment should start covering Dec 15 (today), which means it's late
     const today = startOfDay(paymentDate);
-    const isLate = coverageStartDate < today;
+    const isLate = coverageStartDate <= today;
 
     // If late, the latePaymentDate is the coverage start date (when it should have been paid)
     const latePaymentDate = isLate ? coverageStartDate : null;
