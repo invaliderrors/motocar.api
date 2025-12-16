@@ -373,6 +373,10 @@ export class InstallmentService extends BaseStoreService {
     // Count skipped dates in the period for UI display
     const skippedDatesInPeriod = this.countSkippedDatesInRange(lastCoveredDate, today, skippedDates);
 
+    // Calculate current days ahead (before this payment)
+    // If daysBehind is negative, they are currently ahead
+    const currentDaysAhead = daysBehind < 0 ? Math.abs(daysBehind) : 0;
+
     return {
       loanId: dto.loanId,
       dailyRate: totalDailyRate,
@@ -389,6 +393,7 @@ export class InstallmentService extends BaseStoreService {
       // Additional useful info
       willBeCurrentAfterPayment: dto.amount >= amountNeededToCatchUp,
       daysAheadAfterPayment: coverage.daysCovered - daysBehind,
+      currentDaysAhead, // Current days ahead BEFORE this payment
       // Skipped dates info
       skippedDatesCount: skippedDatesInPeriod,
       skippedDates: skippedDates.slice(0, 10).map(d => d.toISOString()), // Return first 10 for display
