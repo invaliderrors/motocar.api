@@ -190,10 +190,13 @@ export class ReceiptService {
     let advanceInfo = "";
     
     if (paymentType === 'late' && daysSinceLastPayment !== null) {
-      paymentTypeLabel = "PAGO ATRASADO";
+      // If paying on the due date (daysSinceLastPayment === 0), treat it as "al día" not late
       if (daysSinceLastPayment === 0) {
-        paymentDaysStatus = "Estado: Vence hoy";
+        paymentTypeLabel = "PAGO AL DÍA";
+        paymentDaysStatus = "Estado: Al día";
+        messageBottom = "¡Excelente! Mantienes tus pagos al día. Sigue así para alcanzar tu meta.";
       } else {
+        paymentTypeLabel = "PAGO ATRASADO";
         // Format days with one decimal place for consistency
         const daysFormatted = daysSinceLastPayment.toFixed(1);
         
@@ -216,8 +219,8 @@ export class ReceiptService {
         const totalOwed = (installmentsOwed * amountPerInstallment) + (installmentsOwed * gpsPerInstallment);
         
         paymentDaysStatus = `Estado: ${daysFormatted} día${daysSinceLastPayment !== 1 ? 's' : ''} atrasado - Debe ${this.formatCurrency(totalOwed)} para estar al día`;
+        messageBottom = "Recuerda mantener tus pagos al día para evitar cargos adicionales.";
       }
-      messageBottom = "Recuerda mantener tus pagos al día para evitar cargos adicionales.";
     } else if (paymentType === 'advance') {
       paymentTypeLabel = "PAGO ADELANTADO";
       
