@@ -19,10 +19,8 @@ export enum NewsCategory {
 
 export enum VehicleType {
   MOTORCYCLE = 'MOTORCYCLE',
-  CAR = 'CAR',
-  TRUCK = 'TRUCK',
-  VAN = 'VAN',
-  ATV = 'ATV',
+  MOTOCAR = 'MOTOCAR',
+  MOTOLOAD = 'MOTOLOAD',
   OTHER = 'OTHER',
 }
 

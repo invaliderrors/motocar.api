@@ -521,10 +521,8 @@ model ExchangeRate {
 
 enum VehicleType {
   MOTORCYCLE
-  CAR
-  TRUCK
-  VAN
-  ATV
+  MOTOCAR
+  MOTOLOAD
   OTHER
 }
 
