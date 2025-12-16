@@ -14,6 +14,38 @@ export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Safely stringify objects, handling circular references
+   */
+  private safeStringify(obj: any): any {
+    if (!obj) return undefined;
+    
+    try {
+      // Create a map to track seen objects
+      const seen = new WeakSet();
+      
+      return JSON.parse(JSON.stringify(obj, (key, value) => {
+        // Filter out problematic properties
+        if (key === 'socket' || key === 'req' || key === 'res' || key === '_events' || key === '_eventsCount') {
+          return undefined;
+        }
+        
+        // Handle circular references
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) {
+            return '[Circular]';
+          }
+          seen.add(value);
+        }
+        
+        return value;
+      }));
+    } catch (error) {
+      console.error('Error stringifying object:', error);
+      return undefined;
+    }
+  }
+
+  /**
    * Create a new audit log entry
    */
   async createAuditLog(data: CreateAuditLogDto): Promise<AuditLog> {
@@ -26,9 +58,9 @@ export class AuditService {
           action: data.action,
           entity: data.entity,
           entityId: data.entityId,
-          oldValues: data.oldValues ? JSON.parse(JSON.stringify(data.oldValues)) : undefined,
-          newValues: data.newValues ? JSON.parse(JSON.stringify(data.newValues)) : undefined,
-          metadata: data.metadata ? JSON.parse(JSON.stringify(data.metadata)) : undefined,
+          oldValues: this.safeStringify(data.oldValues),
+          newValues: this.safeStringify(data.newValues),
+          metadata: this.safeStringify(data.metadata),
           ipAddress: data.ipAddress || null,
           userAgent: data.userAgent || null,
         },

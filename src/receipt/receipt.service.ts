@@ -73,7 +73,21 @@ export class ReceiptService {
       console.log("No storeId provided in DTO");
     }
     
-    // Determine payment type and display date:
+    // First, calculate daysInAdvance to verify if it's truly an advance payment
+    let daysInAdvance: number | null = null;
+    
+    if (dto.isAdvance && dto.advancePaymentDate) {
+      if (dto.daysAhead !== undefined && dto.daysAhead !== null) {
+        // daysAhead from frontend is negative for advance, convert to positive
+        // Ensure it's a number and round to 1 decimal place
+        daysInAdvance = Math.abs(Number(dto.daysAhead));
+      } else {
+        // Fallback to calculating if not provided
+        daysInAdvance = this.calculateDaysInAdvance(new Date(), new Date(dto.advancePaymentDate));
+      }
+    }
+    
+    // Determine payment type and display date based on actual days
     // 1. Late payment: show latePaymentDate (original due date) in red
     // 2. Advance payment: show advancePaymentDate (future due date) in blue - only if daysAhead > 0
     // 3. On-time payment: show paymentDate (actual payment date) in normal color
@@ -83,7 +97,8 @@ export class ReceiptService {
     if (dto.isLate && dto.latePaymentDate) {
       displayDate = new Date(dto.latePaymentDate);
       paymentType = 'late';
-    } else if (dto.isAdvance && dto.advancePaymentDate && dto.daysAhead && dto.daysAhead > 0) {
+    } else if (dto.isAdvance && dto.advancePaymentDate && daysInAdvance !== null && daysInAdvance > 0) {
+      // Only treat as advance if truly ahead (daysInAdvance > 0)
       displayDate = new Date(dto.advancePaymentDate);
       paymentType = 'advance';
     } else {
@@ -94,19 +109,9 @@ export class ReceiptService {
     // Calculate days since last payment or days in advance
     // Use pre-calculated values from frontend if available, otherwise calculate
     let daysSinceLastPayment: number | null = null;
-    let daysInAdvance: number | null = null;
     let installmentsInAdvance: number = 0;
     
-    if (paymentType === 'advance') {
-      // Use pre-calculated daysAhead from frontend if available
-      if (dto.daysAhead !== undefined && dto.daysAhead !== null) {
-        // daysAhead from frontend is negative for advance, convert to positive
-        // Ensure it's a number and round to 1 decimal place
-        daysInAdvance = Math.abs(Number(dto.daysAhead));
-      } else if (dto.advancePaymentDate) {
-        // Fallback to calculating if not provided
-        daysInAdvance = this.calculateDaysInAdvance(new Date(), new Date(dto.advancePaymentDate));
-      }
+    if (paymentType === 'advance' && daysInAdvance !== null) {
       
       // Calculate installments covered by advance payment
       // For daily frequency: 1 day = 1 installment
@@ -213,11 +218,16 @@ export class ReceiptService {
         paymentDaysStatus = `Estado: ${daysFormatted} día${daysSinceLastPayment !== 1 ? 's' : ''} atrasado - Debe ${this.formatCurrency(totalOwed)} para estar al día`;
       }
       messageBottom = "Recuerda mantener tus pagos al día para evitar cargos adicionales.";
-    } else if (paymentType === 'advance' && daysInAdvance !== null) {
+    } else if (paymentType === 'advance') {
       paymentTypeLabel = "PAGO ADELANTADO";
-      // Format days with one decimal place, show as positive value
-      const daysFormatted = daysInAdvance.toFixed(1);
-      paymentDaysStatus = `Estado: ${daysFormatted} día${daysInAdvance !== 1 ? 's' : ''} (adelantado)`;
+      
+      if (daysInAdvance !== null && daysInAdvance > 0) {
+        // Format days with one decimal place, show as positive value
+        const daysFormatted = daysInAdvance.toFixed(1);
+        paymentDaysStatus = `Estado: ${daysFormatted} día${daysInAdvance !== 1 ? 's' : ''} (adelantado)`;
+      } else {
+        paymentDaysStatus = "Estado: Adelantado";
+      }
       
       // Show installments covered if calculated
       if (installmentsInAdvance > 0) {
