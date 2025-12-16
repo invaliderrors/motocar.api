@@ -25,57 +25,45 @@ export class InstallmentService extends BaseStoreService {
 
   /**
    * Add logical days to a date using the 30-day-per-month convention.
-   * This ensures consistent calculations: 1 month = 30 days exactly.
+   * Every month is treated as having exactly 30 days.
    * 
-   * IMPORTANT: Days 31 are normalized to day 30 (since we use 30-day months)
-   * 
-   * For example, May 31 + 194 days:
-   * - First normalize: May 31 → May 30 (day 0 remaining in month)
-   * - Move to June 1, then 194 - 1 = 193 days remaining
-   * - June 1 + 193 days = December 14
+   * Example: July 3 + 160 days
+   * - Days left in July: 30 - 3 = 27 days (reaches July 30)
+   * - Remaining: 160 - 27 = 133 days
+   * - Full months: 133 ÷ 30 = 4 months (Aug, Sep, Oct, Nov)
+   * - Final days: 133 % 30 = 13 days
+   * - Result: December 13
    */
   private addLogicalDays(startDate: Date, daysToAdd: number): Date {
-    if (daysToAdd <= 0) return startDate;
+    if (daysToAdd === 0) return new Date(startDate);
     
-    const date = new Date(startDate);
+    const result = new Date(startDate);
     let remainingDays = daysToAdd;
+    const currentDay = result.getDate();
     
-    // Normalize: if current day is 31, treat it as day 30 (end of month in 30-day system)
-    let currentDay = date.getDate();
-    if (currentDay > DAYS_PER_MONTH) {
-      currentDay = DAYS_PER_MONTH;
-      date.setDate(DAYS_PER_MONTH);
+    // Days remaining in current month (assuming 30-day months)
+    const daysLeftInCurrentMonth = DAYS_PER_MONTH - currentDay;
+    
+    if (remainingDays <= daysLeftInCurrentMonth) {
+      // All days fit in current month
+      result.setDate(currentDay + remainingDays);
+    } else {
+      // Move to next month
+      remainingDays -= daysLeftInCurrentMonth;
+      result.setMonth(result.getMonth() + 1);
+      
+      // Calculate how many full months and remaining days
+      const fullMonths = Math.floor(remainingDays / DAYS_PER_MONTH);
+      const finalDays = remainingDays % DAYS_PER_MONTH;
+      
+      // Add full months
+      result.setMonth(result.getMonth() + fullMonths);
+      
+      // Add remaining days (if 0, means last day of previous month, so use day 30)
+      result.setDate(finalDays === 0 ? DAYS_PER_MONTH : finalDays);
     }
     
-    // Calculate remaining days in the current month (using 30-day month)
-    const daysLeftInMonth = DAYS_PER_MONTH - currentDay;
-    
-    if (remainingDays <= daysLeftInMonth) {
-      // All days fit in the current month
-      date.setDate(currentDay + remainingDays);
-      return date;
-    }
-    
-    // Move to the first day of next month
-    remainingDays -= (daysLeftInMonth + 1); // +1 to account for moving to day 1 of next month
-    date.setMonth(date.getMonth() + 1);
-    date.setDate(1);
-    
-    // Add full months
-    const fullMonths = Math.floor(remainingDays / DAYS_PER_MONTH);
-    remainingDays = remainingDays % DAYS_PER_MONTH;
-    
-    // Move forward by full months
-    if (fullMonths > 0) {
-      date.setMonth(date.getMonth() + fullMonths);
-    }
-    
-    // Add remaining days
-    if (remainingDays > 0) {
-      date.setDate(date.getDate() + remainingDays);
-    }
-    
-    return date;
+    return result;
   }
 
   /**
@@ -172,13 +160,12 @@ export class InstallmentService extends BaseStoreService {
     // and accounting for skipped dates
     //
     // IMPORTANT: The loan start date is ALREADY COVERED (day 0, free).
-    // Payments cover days AFTER the start date. So if you pay for N days:
-    // - Start date: Dec 4 (covered for free, day 0)
-    // - 1 day paid: covers Dec 5 (day 1) → last covered = Dec 5
-    // - 10 days paid: covers Dec 5-14 (days 1-10) → last covered = Dec 14
-    // - Since start date is day 0, we add totalWorkingDaysCovered to get last covered
-    // - But we also add 1 because the start date itself takes up position 0
-    // Therefore: lastCoveredDate = startDate + 1 + (totalWorkingDaysCovered - 1) = startDate + totalWorkingDaysCovered
+    // When you pay N installments:
+    // - Start date: July 2 (day 0, free, doesn't count)
+    // - First paid day: July 3 (day 1)
+    // - 161 installments paid: July 3 is day 1, last day is day 161
+    // - Formula: firstPaidDay + (daysPaid - 1) = last covered day
+    // - Example: July 3 + (161 - 1) = July 3 + 160 = December 13
     const fullDaysToCount = Math.floor(totalWorkingDaysCovered);
 
     console.log('🔍 getLastCoveredDate calculation:', {
@@ -192,13 +179,13 @@ export class InstallmentService extends BaseStoreService {
       daysCoveredByDownPayment,
     });
 
-    // Use addLogicalDays to add the full days using 30-day month logic
-    // The start date is considered "day 0" and is already covered (free)
-    // When you pay for N days, including the start date, the coverage is:
-    // Start Dec 4 (free) + pay 10 days = covers Dec 4-14 (start + 10 more days = 11 total)
-    // User expects: Dec 5-15 when paying 10 installments from Dec 5 onwards
-    // So we need: addLogicalDays(Dec 4, 10 + 1) = Dec 15
-    let lastCoveredDate = this.addLogicalDays(loanStartDate, fullDaysToCount + 1);
+    // The start date is free, so first paid day is the next day
+    const firstPaidDay = addDays(loanStartDate, 1);
+    
+    // If N days are paid, the last covered day is: firstPaidDay + (N - 1)
+    // The first paid day (July 3) is day 1, so day 161 is July 3 + 160
+    // Example: 161 days → July 3 + 160 = December 13
+    let lastCoveredDate = this.addLogicalDays(firstPaidDay, fullDaysToCount - 1);
     
     // Now adjust for skipped dates by extending the coverage
     // Count how many skipped dates fall between loanStartDate and lastCoveredDate
@@ -358,7 +345,7 @@ export class InstallmentService extends BaseStoreService {
 
     // Calculate days behind/ahead, excluding skipped dates
     // effectiveDaysFromLastCoveredToToday = days from lastCoveredDate to today (inclusive)
-    // If lastCoveredDate = Dec 14 and today = Dec 15, effectiveDays = 1 (owes Dec 15)
+    // If lastCoveredDate = Dec 13 and today = Dec 15, they owe Dec 14 and Dec 15 (2 days behind)
     // If lastCoveredDate = Dec 15 and today = Dec 15, effectiveDays = 0 (up to date - paid through today)
     // NOTE: "Up to date" means paid THROUGH today, not just TO today
     const effectiveDaysFromLastCoveredToToday = this.calculateEffectiveDays(lastCoveredDate, today, skippedDates);
@@ -366,12 +353,18 @@ export class InstallmentService extends BaseStoreService {
     
     console.log('📊 Payment coverage calculation:', {
       loanId: dto.loanId,
+      loanStartDate: loan.startDate,
       lastCoveredDate: lastCoveredDate.toISOString(),
+      lastCoveredDateFormatted: `${lastCoveredDate.getFullYear()}-${String(lastCoveredDate.getMonth() + 1).padStart(2, '0')}-${String(lastCoveredDate.getDate()).padStart(2, '0')}`,
       today: today.toISOString(),
+      todayFormatted: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
       effectiveDaysFromLastCoveredToToday,
       daysBehind,
       paymentDaysCovered: coverage.daysCovered,
+      coverageStartDate: coverage.coverageStartDate.toISOString(),
+      coverageEndDate: coverage.coverageEndDate.toISOString(),
       willBeAheadAfterPayment: coverage.daysCovered - daysBehind,
+      skippedDatesCount: skippedDates.length,
     });
     
     // Calculate amount needed to catch up to today (only for non-skipped days)
