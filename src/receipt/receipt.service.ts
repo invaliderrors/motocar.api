@@ -171,7 +171,8 @@ export class ReceiptService {
       
       // Calculate debt for the days owed (not total remaining debt)
       if (installmentsOwed > 0) {
-        const amountPerInstallment = (dto.amount || 0);
+        // Use contract's installment amount if provided, otherwise fall back to current payment amount
+        const amountPerInstallment = dto.installmentPaymentAmmount ?? dto.amount ?? 0;
         const gpsPerInstallment = (dto.gps || 0);
         
         const owedMotoDebt = installmentsOwed * amountPerInstallment;
@@ -214,7 +215,8 @@ export class ReceiptService {
           installmentsOwed = daysSinceLastPayment;
         }
         
-        const amountPerInstallment = (dto.amount || 0);
+        // Use contract's installment amount if provided, otherwise fall back to current payment amount
+        const amountPerInstallment = dto.installmentPaymentAmmount ?? dto.amount ?? 0;
         const gpsPerInstallment = (dto.gps || 0);
         const totalOwed = (installmentsOwed * amountPerInstallment) + (installmentsOwed * gpsPerInstallment);
         

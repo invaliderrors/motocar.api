@@ -95,6 +95,10 @@ export class CreateReceiptDto {
   @IsNumber()
   @IsOptional()
   daysBehind?: number;
+
+  @IsNumber()
+  @IsOptional()
+  installmentPaymentAmmount?: number; // Contract's installment amount (daily, weekly, etc.)
 }
 
 export class SendReceiptWhatsappDto {
