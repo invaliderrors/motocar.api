@@ -102,8 +102,9 @@ export class InstallmentService extends BaseStoreService {
    * start date, so the user doesn't owe from day 1.
    * 
    * @param excludeInstallmentId - If provided, excludes this installment from calculation (for editing)
+   * @returns Object with lastCoveredDate and totalDaysCovered (exact decimal)
    */
-  private async getLastCoveredDate(loanId: string, loan: any, excludeInstallmentId?: string): Promise<Date> {
+  private async getLastCoveredDate(loanId: string, loan: any, excludeInstallmentId?: string): Promise<{ lastCoveredDate: Date; totalDaysCovered: number }> {
     // Get all existing payments for this loan
     const existingPayments = await this.prisma.installment.findMany({
       where: { 
@@ -152,7 +153,10 @@ export class InstallmentService extends BaseStoreService {
     if (totalWorkingDaysCovered === 0) {
       // No coverage at all - return the loan start date itself
       // The start date is covered by default, next payment starts from day after
-      return loanStartDate;
+      return {
+        lastCoveredDate: loanStartDate,
+        totalDaysCovered: 0,
+      };
     }
 
     // Now we need to find the date that corresponds to totalWorkingDaysCovered
@@ -203,7 +207,10 @@ export class InstallmentService extends BaseStoreService {
       skippedInRange,
     });
 
-    return lastCoveredDate;
+    return {
+      lastCoveredDate,
+      totalDaysCovered: totalWorkingDaysCovered, // Return exact fractional value
+    };
   }
 
   /**
@@ -322,7 +329,10 @@ export class InstallmentService extends BaseStoreService {
     const totalDailyRate = baseDailyRate + gpsDailyRate;
     
     // Pass excludeInstallmentId to exclude the installment being edited
-    const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan, dto.excludeInstallmentId);
+    const lastCoveredResult = await this.getLastCoveredDate(dto.loanId, loan, dto.excludeInstallmentId);
+    const lastCoveredDate = lastCoveredResult.lastCoveredDate;
+    const exactDaysCovered = lastCoveredResult.totalDaysCovered;
+    
     // Use Colombia time for "today" calculation
     const systemDate = new Date();
     const colombiaDate = toColombiaUtc(systemDate);
@@ -343,13 +353,29 @@ export class InstallmentService extends BaseStoreService {
       skippedDates,
     );
 
-    // Calculate days behind/ahead, excluding skipped dates
-    // effectiveDaysFromLastCoveredToToday = days from lastCoveredDate to today (inclusive)
-    // If lastCoveredDate = Dec 13 and today = Dec 15, they owe Dec 14 and Dec 15 (2 days behind)
-    // If lastCoveredDate = Dec 15 and today = Dec 15, effectiveDays = 0 (up to date - paid through today)
-    // NOTE: "Up to date" means paid THROUGH today, not just TO today
+    // Calculate EXACT fractional days behind/ahead
+    // First calculate how many logical days from loan start to today (using 30-day months)
+    const loanStartDate = startOfDay(toColombiaUtc(new Date(loan.startDate)));
+    const logicalDaysFromStartToToday = this.getLogicalDaysDifference(loanStartDate, today);
+    
+    // Subtract skipped dates that fall in this range
+    const skippedFromStartToToday = this.countSkippedDatesInRange(loanStartDate, today, skippedDates);
+    const effectiveDaysFromStartToToday = logicalDaysFromStartToToday - skippedFromStartToToday;
+    
+    // Days behind = effective days owed - exact days covered
+    // This preserves fractional precision (e.g., if they've paid 1.13 installments, exactDaysCovered = 1.13)
+    const daysBehindExact = effectiveDaysFromStartToToday - exactDaysCovered;
+    const daysBehind = Math.max(0, daysBehindExact);
+    
+    // For legacy compatibility, also calculate from lastCoveredDate to today
     const effectiveDaysFromLastCoveredToToday = this.calculateEffectiveDays(lastCoveredDate, today, skippedDates);
-    const daysBehind = Math.max(0, effectiveDaysFromLastCoveredToToday);
+    
+    // Calculate exact installments: total installments that should be paid by today
+    const installmentsShouldBePaidByToday = effectiveDaysFromStartToToday;
+    // Exact installments already paid (with full decimal precision)
+    const exactInstallmentsPaid = exactDaysCovered;
+    // Exact installments owed (can be fractional, e.g., 1.13)
+    const exactInstallmentsOwed = Math.max(0, installmentsShouldBePaidByToday - exactInstallmentsPaid);
     
     console.log('📊 Payment coverage calculation:', {
       loanId: dto.loanId,
@@ -358,8 +384,12 @@ export class InstallmentService extends BaseStoreService {
       lastCoveredDateFormatted: `${lastCoveredDate.getFullYear()}-${String(lastCoveredDate.getMonth() + 1).padStart(2, '0')}-${String(lastCoveredDate.getDate()).padStart(2, '0')}`,
       today: today.toISOString(),
       todayFormatted: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
+      exactDaysCovered,
       effectiveDaysFromLastCoveredToToday,
+      daysBehindExact,
       daysBehind,
+      exactInstallmentsPaid,
+      exactInstallmentsOwed,
       paymentDaysCovered: coverage.daysCovered,
       coverageStartDate: coverage.coverageStartDate.toISOString(),
       coverageEndDate: coverage.coverageEndDate.toISOString(),
@@ -368,6 +398,7 @@ export class InstallmentService extends BaseStoreService {
     });
     
     // Calculate amount needed to catch up to today (only for non-skipped days)
+    // Use exact fractional days for precise amount
     const amountNeededToCatchUp = daysBehind * totalDailyRate;
 
     // Count skipped dates in the period for UI display
@@ -375,7 +406,7 @@ export class InstallmentService extends BaseStoreService {
 
     // Calculate current days ahead (before this payment)
     // If daysBehind is negative, they are currently ahead
-    const currentDaysAhead = daysBehind < 0 ? Math.abs(daysBehind) : 0;
+    const currentDaysAhead = daysBehindExact < 0 ? Math.abs(daysBehindExact) : 0;
 
     return {
       loanId: dto.loanId,
@@ -394,6 +425,10 @@ export class InstallmentService extends BaseStoreService {
       willBeCurrentAfterPayment: dto.amount >= amountNeededToCatchUp,
       daysAheadAfterPayment: coverage.daysCovered - daysBehind,
       currentDaysAhead, // Current days ahead BEFORE this payment
+      // EXACT DECIMAL PRECISION FIELDS (e.g., 1.129032258 installments)
+      exactInstallmentsPaid, // Exact installments paid so far (e.g., 1.13)
+      exactInstallmentsOwed, // Exact installments owed (e.g., 1.87)
+      exactDaysBehind: daysBehindExact, // Can be negative if ahead
       // Skipped dates info
       skippedDatesCount: skippedDatesInPeriod,
       skippedDates: skippedDates.slice(0, 10).map(d => d.toISOString()), // Return first 10 for display
@@ -513,7 +548,8 @@ export class InstallmentService extends BaseStoreService {
     const totalPaymentAmount = dto.amount + gpsAmount;
     
     // Get the last covered date for this loan
-    const lastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
+    const lastCoveredResult = await this.getLastCoveredDate(dto.loanId, loan);
+    const lastCoveredDate = lastCoveredResult.lastCoveredDate;
     
     // Fetch skipped dates for this loan (from news)
     let skippedDates: Date[] = [];
@@ -599,7 +635,8 @@ export class InstallmentService extends BaseStoreService {
         : LoanStatus.ACTIVE;
 
     // Calculate new lastCoveredDate after this payment
-    const newLastCoveredDate = await this.getLastCoveredDate(dto.loanId, loan);
+    const newLastCoveredResult = await this.getLastCoveredDate(dto.loanId, loan);
+    const newLastCoveredDate = newLastCoveredResult.lastCoveredDate;
 
     await this.prisma.loan.update({
       where: { id: loan.id },
@@ -788,21 +825,17 @@ export class InstallmentService extends BaseStoreService {
         }
         
         // Calculate days owed from start to today (excluding skipped dates)
-        // Use actual calendar days, not logical 30-day months
+        // Use LOGICAL 30-day months for consistency with the rest of the system
         const loanStartDate = startOfDay(toColombiaUtc(new Date(loan.startDate)));
         
-        // Count actual calendar days from loan start to today
-        let daysOwed = 0;
-        let currentDate = new Date(loanStartDate);
-        while (currentDate < today) {
-          currentDate = addDays(currentDate, 1);
-          // Only count non-skipped dates
-          if (!this.isDateSkipped(currentDate, skippedDates)) {
-            daysOwed++;
-          }
-        }
+        // Calculate logical days from loan start to today (using 30-day months)
+        const logicalDaysFromStartToToday = this.getLogicalDaysDifference(loanStartDate, today);
         
-        // currentDaysBehind = days owed - days covered
+        // Subtract skipped dates that fall in this range
+        const skippedFromStartToToday = this.countSkippedDatesInRange(loanStartDate, today, skippedDates);
+        const daysOwed = logicalDaysFromStartToToday - skippedFromStartToToday;
+        
+        // currentDaysBehind = days owed - days covered (with exact decimal precision)
         // Positive = behind, Negative = ahead, Zero = up to date
         const currentDaysBehind = daysOwed - totalDaysCovered;
         
@@ -815,8 +848,8 @@ export class InstallmentService extends BaseStoreService {
           today: today.toISOString(),
         });
         
-        const lastCoveredDate = await this.getLastCoveredDate(loanId, loan);
-        loanStatusCache.set(loanId, { currentDaysBehind, lastCoveredDate });
+        const lastCoveredResult = await this.getLastCoveredDate(loanId, loan);
+        loanStatusCache.set(loanId, { currentDaysBehind, lastCoveredDate: lastCoveredResult.lastCoveredDate });
       }
     }
 
@@ -824,6 +857,26 @@ export class InstallmentService extends BaseStoreService {
     const enrichedData = data.map(installment => {
       const isMostRecent = mostRecentInstallmentPerLoan.get(installment.loanId) === installment.id;
       const loanStatus = isMostRecent ? loanStatusCache.get(installment.loanId) : null;
+      
+      // Calculate exact installments owed and remaining amount if late
+      let exactInstallmentsOwed = 0;
+      let remainingAmountOwed = 0;
+      
+      if (isMostRecent && loanStatus) {
+        const loan = installment.loan;
+        const baseDailyRate = loan.installmentPaymentAmmount || 0;
+        const gpsDailyRate = loan.gpsInstallmentPayment || 0;
+        const totalDailyRate = baseDailyRate + gpsDailyRate;
+        
+        // If currentDaysBehind is positive, they owe money
+        if (loanStatus.currentDaysBehind > 0) {
+          // Exact installments owed (with full decimal precision, e.g., 1.129032258)
+          exactInstallmentsOwed = loanStatus.currentDaysBehind;
+          
+          // Remaining amount owed (in currency)
+          remainingAmountOwed = exactInstallmentsOwed * totalDailyRate;
+        }
+      }
       
       return {
         ...installment,
@@ -836,6 +889,9 @@ export class InstallmentService extends BaseStoreService {
           currentDaysBehind: loanStatus.currentDaysBehind,
           lastCoveredDate: loanStatus.lastCoveredDate,
           isLatestInstallment: true,
+          // NEW: Exact decimal precision fields for late payments
+          exactInstallmentsOwed, // e.g., 1.129032258 installments
+          remainingAmountOwed,   // e.g., $35,000
         } : {}),
       };
     });
@@ -972,7 +1028,7 @@ export class InstallmentService extends BaseStoreService {
         : LoanStatus.ACTIVE;
 
     // Recalculate lastCoveredDate after removing this installment
-    const newLastCoveredDate = await this.getLastCoveredDate(loan.id, loan, id);
+    const newLastCoveredResult = await this.getLastCoveredDate(loan.id, loan, id);
 
     await this.prisma.loan.update({
       where: { id: loan.id },
@@ -982,7 +1038,7 @@ export class InstallmentService extends BaseStoreService {
         totalPaid: updatedTotalPaid,
         debtRemaining: updatedDebt,
         status: newStatus,
-        lastCoveredDate: newLastCoveredDate,
+        lastCoveredDate: newLastCoveredResult.lastCoveredDate,
       },
     });
 

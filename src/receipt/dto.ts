@@ -99,6 +99,14 @@ export class CreateReceiptDto {
   @IsNumber()
   @IsOptional()
   installmentPaymentAmmount?: number; // Contract's installment amount (daily, weekly, etc.)
+
+  @IsNumber()
+  @IsOptional()
+  exactInstallmentsOwed?: number; // Exact installments owed with decimal precision
+
+  @IsNumber()
+  @IsOptional()
+  remainingAmountOwed?: number; // Exact remaining amount owed in currency
 }
 
 export class SendReceiptWhatsappDto {

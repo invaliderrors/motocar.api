@@ -147,38 +147,52 @@ export class ReceiptService {
     
     // Only show "cuotas restante" for late payments, showing days owed until today
     if (paymentType === 'late' && daysSinceLastPayment !== null && daysSinceLastPayment > 0) {
-      // Calculate how many installments are owed based on days late and payment frequency
+      // Use exact calculated values if provided, otherwise fall back to estimation
       let installmentsOwed = 0;
+      let owedMotoDebt = 0;
+      let owedGpsDebt = 0;
       
-      if (dto.paymentFrequency === 'DAILY') {
-        installmentsOwed = daysSinceLastPayment;
-      } else if (dto.paymentFrequency === 'WEEKLY') {
-        installmentsOwed = Math.floor(daysSinceLastPayment / 7 * 10) / 10; // One decimal
-      } else if (dto.paymentFrequency === 'BIWEEKLY') {
-        installmentsOwed = Math.floor(daysSinceLastPayment / 14 * 10) / 10; // One decimal
-      } else if (dto.paymentFrequency === 'MONTHLY') {
-        installmentsOwed = Math.floor(daysSinceLastPayment / 30 * 10) / 10; // One decimal
+      if (dto.exactInstallmentsOwed !== undefined && dto.remainingAmountOwed !== undefined) {
+        // Use exact values from the API calculation
+        installmentsOwed = dto.exactInstallmentsOwed;
+        
+        // Split remaining amount between base and GPS based on daily rates
+        const amountPerInstallment = dto.installmentPaymentAmmount ?? dto.amount ?? 0;
+        const gpsPerInstallment = dto.gps || 0;
+        const totalPerInstallment = amountPerInstallment + gpsPerInstallment;
+        
+        if (totalPerInstallment > 0) {
+          owedMotoDebt = (amountPerInstallment / totalPerInstallment) * dto.remainingAmountOwed;
+          owedGpsDebt = (gpsPerInstallment / totalPerInstallment) * dto.remainingAmountOwed;
+        }
       } else {
-        // Default to daily if frequency is not specified
-        installmentsOwed = daysSinceLastPayment;
+        // Fall back to old estimation logic
+        if (dto.paymentFrequency === 'DAILY') {
+          installmentsOwed = daysSinceLastPayment;
+        } else if (dto.paymentFrequency === 'WEEKLY') {
+          installmentsOwed = Math.floor(daysSinceLastPayment / 7 * 10) / 10; // One decimal
+        } else if (dto.paymentFrequency === 'BIWEEKLY') {
+          installmentsOwed = Math.floor(daysSinceLastPayment / 14 * 10) / 10; // One decimal
+        } else if (dto.paymentFrequency === 'MONTHLY') {
+          installmentsOwed = Math.floor(daysSinceLastPayment / 30 * 10) / 10; // One decimal
+        } else {
+          // Default to daily if frequency is not specified
+          installmentsOwed = daysSinceLastPayment;
+        }
+        
+        // Calculate debt using old method
+        const amountPerInstallment = dto.installmentPaymentAmmount ?? dto.amount ?? 0;
+        const gpsPerInstallment = dto.gps || 0;
+        owedMotoDebt = installmentsOwed * amountPerInstallment;
+        owedGpsDebt = installmentsOwed * gpsPerInstallment;
       }
       
-      const installmentsOwedFormatted = installmentsOwed % 1 === 0 
-        ? installmentsOwed.toString() 
-        : installmentsOwed.toFixed(1);
+      // Format with 2 decimal places for precision
+      const installmentsOwedFormatted = installmentsOwed.toFixed(2);
       
       cuotasRestanteInfo = `CUOTAS ATRASADAS: ${installmentsOwedFormatted}`;
       
-      // Calculate debt for the days owed (not total remaining debt)
       if (installmentsOwed > 0) {
-        // Use contract's installment amount if provided, otherwise fall back to current payment amount
-        const amountPerInstallment = dto.installmentPaymentAmmount ?? dto.amount ?? 0;
-        const gpsPerInstallment = (dto.gps || 0);
-        
-        const owedMotoDebt = installmentsOwed * amountPerInstallment;
-        const owedGpsDebt = installmentsOwed * gpsPerInstallment;
-        const totalOwed = owedMotoDebt + owedGpsDebt;
-        
         saldoRestanteMoto = `MOTO ATRASADO: ${this.formatCurrency(owedMotoDebt)}`;
         saldoRestanteGps = `GPS ATRASADO: ${this.formatCurrency(owedGpsDebt)}`;
       }
@@ -198,29 +212,40 @@ export class ReceiptService {
         messageBottom = "¡Excelente! Mantienes tus pagos al día. Sigue así para alcanzar tu meta.";
       } else {
         paymentTypeLabel = "PAGO ATRASADO";
-        // Format days with one decimal place for consistency
-        const daysFormatted = daysSinceLastPayment.toFixed(1);
         
-        // Calculate total amount owed based on days behind
-        let installmentsOwed = 0;
-        if (dto.paymentFrequency === 'DAILY') {
-          installmentsOwed = daysSinceLastPayment;
-        } else if (dto.paymentFrequency === 'WEEKLY') {
-          installmentsOwed = Math.floor(daysSinceLastPayment / 7 * 10) / 10;
-        } else if (dto.paymentFrequency === 'BIWEEKLY') {
-          installmentsOwed = Math.floor(daysSinceLastPayment / 14 * 10) / 10;
-        } else if (dto.paymentFrequency === 'MONTHLY') {
-          installmentsOwed = Math.floor(daysSinceLastPayment / 30 * 10) / 10;
+        // Use exact values if provided, otherwise fall back to old calculation
+        let installmentsOwedDisplay = 0;
+        let totalOwed = 0;
+        
+        if (dto.exactInstallmentsOwed !== undefined && dto.remainingAmountOwed !== undefined) {
+          // Use exact calculated values
+          installmentsOwedDisplay = dto.exactInstallmentsOwed;
+          totalOwed = dto.remainingAmountOwed;
         } else {
-          installmentsOwed = daysSinceLastPayment;
+          // Fall back to old estimation logic
+          let installmentsOwed = 0;
+          if (dto.paymentFrequency === 'DAILY') {
+            installmentsOwed = daysSinceLastPayment;
+          } else if (dto.paymentFrequency === 'WEEKLY') {
+            installmentsOwed = Math.floor(daysSinceLastPayment / 7 * 10) / 10;
+          } else if (dto.paymentFrequency === 'BIWEEKLY') {
+            installmentsOwed = Math.floor(daysSinceLastPayment / 14 * 10) / 10;
+          } else if (dto.paymentFrequency === 'MONTHLY') {
+            installmentsOwed = Math.floor(daysSinceLastPayment / 30 * 10) / 10;
+          } else {
+            installmentsOwed = daysSinceLastPayment;
+          }
+          
+          installmentsOwedDisplay = installmentsOwed;
+          const amountPerInstallment = dto.installmentPaymentAmmount ?? dto.amount ?? 0;
+          const gpsPerInstallment = (dto.gps || 0);
+          totalOwed = (installmentsOwed * amountPerInstallment) + (installmentsOwed * gpsPerInstallment);
         }
         
-        // Use contract's installment amount if provided, otherwise fall back to current payment amount
-        const amountPerInstallment = dto.installmentPaymentAmmount ?? dto.amount ?? 0;
-        const gpsPerInstallment = (dto.gps || 0);
-        const totalOwed = (installmentsOwed * amountPerInstallment) + (installmentsOwed * gpsPerInstallment);
+        // Format with 2 decimal places for exact precision
+        const daysFormatted = installmentsOwedDisplay.toFixed(2);
         
-        paymentDaysStatus = `Estado: ${daysFormatted} día${daysSinceLastPayment !== 1 ? 's' : ''} atrasado - Debe ${this.formatCurrency(totalOwed)} para estar al día`;
+        paymentDaysStatus = `Estado: ${daysFormatted} día${installmentsOwedDisplay !== 1 ? 's' : ''} atrasado - Debe ${this.formatCurrency(totalOwed)} para estar al día`;
         messageBottom = "Recuerda mantener tus pagos al día para evitar cargos adicionales.";
       }
     } else if (paymentType === 'advance') {
