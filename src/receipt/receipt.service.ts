@@ -193,8 +193,8 @@ export class ReceiptService {
       cuotasRestanteInfo = `CUOTAS ATRASADAS: ${installmentsOwedFormatted}`;
       
       if (installmentsOwed > 0) {
-        saldoRestanteMoto = `MOTO ATRASADO: ${this.formatCurrency(owedMotoDebt)}`;
-        saldoRestanteGps = `GPS ATRASADO: ${this.formatCurrency(owedGpsDebt)}`;
+        saldoRestanteMoto = `MOTO ATRASADO: ${this.formatCurrency(owedMotoDebt, true)}`;
+        saldoRestanteGps = `GPS ATRASADO: ${this.formatCurrency(owedGpsDebt, true)}`;
       }
     }
 
@@ -245,7 +245,7 @@ export class ReceiptService {
         // Format with 2 decimal places for exact precision
         const daysFormatted = installmentsOwedDisplay.toFixed(2);
         
-        paymentDaysStatus = `Estado: ${daysFormatted} día${installmentsOwedDisplay !== 1 ? 's' : ''} atrasado - Debe ${this.formatCurrency(totalOwed)} para estar al día`;
+        paymentDaysStatus = `Estado: ${daysFormatted} día${installmentsOwedDisplay !== 1 ? 's' : ''} atrasado - Debe ${this.formatCurrency(totalOwed, true)} para estar al día`;
         messageBottom = "Recuerda mantener tus pagos al día para evitar cargos adicionales.";
       }
     } else if (paymentType === 'advance') {
@@ -341,12 +341,21 @@ export class ReceiptService {
       .replace(/{{paymentMethod}}/g, data.paymentMethod) 
   }
 
-  private formatCurrency(value: number): string {
+  /**
+   * Round to the nearest 50 COP
+   * Examples: 91.315 -> 91.300, 91.340 -> 91.350, 91.370 -> 91.400
+   */
+  private roundToNearest50(value: number): number {
+    return Math.round(value / 50) * 50;
+  }
+
+  private formatCurrency(value: number, shouldRound: boolean = false): string {
+    const finalValue = shouldRound ? this.roundToNearest50(value) : value;
     const formatted = new Intl.NumberFormat("es-CO", {
       style: "currency",
       currency: "COP",
       minimumFractionDigits: 0,
-    }).format(value)
+    }).format(finalValue)
     // Replace $ with COP for clarity
     return formatted.replace('$', 'COP ')
   }
