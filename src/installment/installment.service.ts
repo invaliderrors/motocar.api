@@ -599,6 +599,41 @@ export class InstallmentService extends BaseStoreService {
       ? toColombiaMidnightUtc(dto.advancePaymentDate) 
       : toColombiaMidnightUtc(coverage.coverageEndDate);
 
+    // Calculate debt snapshot BEFORE this payment for permanent storage
+    // This makes each installment truly independent
+    const baseDailyRateForSnapshot = loan.installmentPaymentAmmount;
+    const gpsDailyRateForSnapshot = loan.gpsInstallmentPayment || 0;
+    const totalDailyRateForSnapshot = baseDailyRateForSnapshot + gpsDailyRateForSnapshot;
+    
+    // Get total days covered before this payment
+    const existingPayments = await this.prisma.installment.findMany({
+      where: { 
+        loanId: dto.loanId,
+        loan: { archived: false },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    
+    const downPayment = loan.downPayment || 0;
+    let totalDaysCoveredBeforePayment = totalDailyRateForSnapshot > 0 && downPayment > 0 
+      ? downPayment / totalDailyRateForSnapshot 
+      : 0;
+    
+    for (const payment of existingPayments) {
+      const totalPayment = (payment.amount || 0) + (payment.gps || 0);
+      totalDaysCoveredBeforePayment += totalPayment / totalDailyRateForSnapshot;
+    }
+    
+    // Calculate days owed from start to today
+    const loanStartDate = startOfDay(toColombiaUtc(new Date(loan.startDate)));
+    const logicalDaysFromStartToToday = this.getLogicalDaysDifference(loanStartDate, today);
+    const skippedFromStartToToday = this.countSkippedDatesInRange(loanStartDate, today, skippedDates);
+    const daysOwedBeforePayment = logicalDaysFromStartToToday - skippedFromStartToToday;
+    
+    // Calculate exact debt BEFORE this payment
+    const exactInstallmentsOwedBeforePayment = Math.max(0, daysOwedBeforePayment - totalDaysCoveredBeforePayment);
+    const remainingAmountOwedBeforePayment = exactInstallmentsOwedBeforePayment * totalDailyRateForSnapshot;
+
     const installment = await this.prisma.installment.create({
       data: {
         store: { connect: { id: storeId } },
@@ -613,6 +648,9 @@ export class InstallmentService extends BaseStoreService {
         paymentMethod: dto.paymentMethod,
         isLate: isLate,
         attachmentUrl: dto.attachmentUrl,
+        // Store debt snapshot - IMMUTABLE after creation
+        exactInstallmentsOwed: exactInstallmentsOwedBeforePayment,
+        remainingAmountOwed: remainingAmountOwedBeforePayment,
         createdAt: toColombiaUtc(new Date()),
         updatedAt: toColombiaUtc(new Date()),
         createdBy: dto.createdById ? { connect: { id: dto.createdById } } : undefined,
@@ -858,42 +896,60 @@ export class InstallmentService extends BaseStoreService {
       const isMostRecent = mostRecentInstallmentPerLoan.get(installment.loanId) === installment.id;
       const loanStatus = isMostRecent ? loanStatusCache.get(installment.loanId) : null;
       
-      // Calculate exact installments owed and remaining amount if late
-      let exactInstallmentsOwed = 0;
-      let remainingAmountOwed = 0;
+      // Log what we're doing for debugging
+      console.log(`📝 Processing installment ${installment.id}:`, {
+        isMostRecent,
+        storedExactInstallmentsOwed: installment.exactInstallmentsOwed,
+        storedRemainingAmountOwed: installment.remainingAmountOwed,
+        loanId: installment.loanId,
+      });
       
+      // CRITICAL: Historical installments are COMPLETELY IMMUTABLE
+      // We return them EXACTLY as stored in the database without any modification
+      const result: any = {
+        ...installment,
+        loan: {
+          ...installment.loan,
+          payments: undefined, // Remove payments array from response to reduce payload
+        },
+      };
+      
+      // ONLY modify the latest installment with current status
       if (isMostRecent && loanStatus) {
         const loan = installment.loan;
         const baseDailyRate = loan.installmentPaymentAmmount || 0;
         const gpsDailyRate = loan.gpsInstallmentPayment || 0;
         const totalDailyRate = baseDailyRate + gpsDailyRate;
         
-        // If currentDaysBehind is positive, they owe money
+        // Calculate current debt for latest installment
+        let currentExactInstallmentsOwed = 0;
+        let currentRemainingAmountOwed = 0;
+        
         if (loanStatus.currentDaysBehind > 0) {
-          // Exact installments owed (with full decimal precision, e.g., 1.129032258)
-          exactInstallmentsOwed = loanStatus.currentDaysBehind;
-          
-          // Remaining amount owed (in currency)
-          remainingAmountOwed = exactInstallmentsOwed * totalDailyRate;
+          currentExactInstallmentsOwed = loanStatus.currentDaysBehind;
+          currentRemainingAmountOwed = currentExactInstallmentsOwed * totalDailyRate;
         }
+        
+        console.log(`✏️ Updating latest installment ${installment.id} with current values:`, {
+          currentExactInstallmentsOwed,
+          currentRemainingAmountOwed,
+        });
+        
+        // Set current values for latest installment only
+        result.exactInstallmentsOwed = currentExactInstallmentsOwed;
+        result.remainingAmountOwed = currentRemainingAmountOwed;
+        result.currentDaysBehind = loanStatus.currentDaysBehind;
+        result.lastCoveredDate = loanStatus.lastCoveredDate;
+        result.isLatestInstallment = true;
+      } else {
+        // Historical installment - verify we're keeping stored values
+        console.log(`🔒 Historical installment ${installment.id} keeping stored values:`, {
+          exactInstallmentsOwed: result.exactInstallmentsOwed,
+          remainingAmountOwed: result.remainingAmountOwed,
+        });
       }
       
-      return {
-        ...installment,
-        loan: {
-          ...installment.loan,
-          payments: undefined, // Remove payments array from response to reduce payload
-        },
-        // Only add currentDaysBehind to the most recent installment
-        ...(isMostRecent && loanStatus ? {
-          currentDaysBehind: loanStatus.currentDaysBehind,
-          lastCoveredDate: loanStatus.lastCoveredDate,
-          isLatestInstallment: true,
-          // NEW: Exact decimal precision fields for late payments
-          exactInstallmentsOwed, // e.g., 1.129032258 installments
-          remainingAmountOwed,   // e.g., $35,000
-        } : {}),
-      };
+      return result;
     });
 
     return {

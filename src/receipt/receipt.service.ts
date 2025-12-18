@@ -205,11 +205,12 @@ export class ReceiptService {
     let advanceInfo = "";
     
     if (paymentType === 'late' && daysSinceLastPayment !== null) {
-      // Check if there's any remaining debt before marking as "al día"
-      const hasRemainingDebt = dto.remainingAmountOwed && dto.remainingAmountOwed > 0;
+      // Check if there WAS debt BEFORE this payment (exactInstallmentsOwed)
+      // If there was accumulated debt, it's a late payment even if they cleared it all
+      const hadAccumulatedDebt = dto.exactInstallmentsOwed && dto.exactInstallmentsOwed > 0;
       
-      // If paying on the due date (daysSinceLastPayment === 0) AND no remaining debt, treat it as "al día"
-      if (daysSinceLastPayment === 0 && !hasRemainingDebt) {
+      // Only mark as "al día" if paid on time AND there was NO accumulated debt
+      if (daysSinceLastPayment === 0 && !hadAccumulatedDebt) {
         paymentTypeLabel = "PAGO AL DÍA";
         paymentDaysStatus = "Estado: Al día";
         messageBottom = "¡Excelente! Mantienes tus pagos al día. Sigue así para alcanzar tu meta.";

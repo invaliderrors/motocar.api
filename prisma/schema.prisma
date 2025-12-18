@@ -233,6 +233,10 @@ model Installment {
   archived            Boolean       @default(false)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
+  
+  // Debt snapshot at the time of payment creation - IMMUTABLE after creation
+  exactInstallmentsOwed Float?      // Exact installments owed BEFORE this payment (e.g., 1.87)
+  remainingAmountOwed   Float?      // Exact amount owed BEFORE this payment in currency
 
   // Relaciones
   createdBy      Employee?     @relation(fields: [createdById], references: [id])
