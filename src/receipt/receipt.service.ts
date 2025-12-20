@@ -83,9 +83,11 @@ export class ReceiptService {
       }
       if (installment.latePaymentDate) {
         enrichedDto.latePaymentDate = installment.latePaymentDate.toISOString();
+        console.log('Using latePaymentDate from DB:', installment.latePaymentDate.toISOString());
       }
       if (installment.advancePaymentDate) {
         enrichedDto.advancePaymentDate = installment.advancePaymentDate.toISOString();
+        console.log('Using advancePaymentDate from DB:', installment.advancePaymentDate.toISOString());
       }
 
       console.log('Enriched DTO with database data:', {
@@ -96,10 +98,16 @@ export class ReceiptService {
         hasExactOwed: !!enrichedDto.exactInstallmentsOwed,
         exactInstallmentsOwed: enrichedDto.exactInstallmentsOwed,
         remainingAmountOwed: enrichedDto.remainingAmountOwed,
+        latePaymentDate: enrichedDto.latePaymentDate,
+        advancePaymentDate: enrichedDto.advancePaymentDate,
+        isLate: enrichedDto.isLate,
+        isAdvance: enrichedDto.isAdvance,
         storedFromDB: {
           daysBehind: installment.daysBehind,
           daysAhead: installment.daysAhead,
           isUpToDate: installment.isUpToDate,
+          latePaymentDate: installment.latePaymentDate,
+          advancePaymentDate: installment.advancePaymentDate,
         }
       });
 
@@ -195,19 +203,20 @@ export class ReceiptService {
     }
     
     // Determine payment type and display date based on actual days
-    // 1. Late payment: show latePaymentDate (original due date) in red
-    // 2. Advance payment: show advancePaymentDate (future due date) in blue - only if daysAhead > 0
-    // 3. On-time payment: show paymentDate (actual payment date) in normal color
+    // PRIORITY (matching table logic):
+    // 1. advancePaymentDate if exists (future due date)
+    // 2. latePaymentDate if exists (original due date)
+    // 3. paymentDate (actual payment date)
     let displayDate: Date;
     let paymentType: 'late' | 'advance' | 'ontime';
     
-    if (dto.isLate && dto.latePaymentDate) {
+    if (dto.advancePaymentDate) {
+      // Check advancePaymentDate FIRST (matching table logic)
+      displayDate = new Date(dto.advancePaymentDate);
+      paymentType = dto.isAdvance && daysInAdvance !== null && daysInAdvance > 0 ? 'advance' : 'ontime';
+    } else if (dto.isLate && dto.latePaymentDate) {
       displayDate = new Date(dto.latePaymentDate);
       paymentType = 'late';
-    } else if (dto.isAdvance && dto.advancePaymentDate && daysInAdvance !== null && daysInAdvance > 0) {
-      // Only treat as advance if truly ahead (daysInAdvance > 0)
-      displayDate = new Date(dto.advancePaymentDate);
-      paymentType = 'advance';
     } else {
       displayDate = new Date(dto.paymentDate);
       paymentType = 'ontime';
@@ -460,7 +469,7 @@ export class ReceiptService {
       formattedTotal: this.formatCurrency((dto.amount || 0) + (dto.gps || 0)),
       formattedDate: this.formatDate(dto.date),
       concept: dto.concept || "Monto",
-      formattedPaymentDate: this.formatDateOnly(displayDate),
+      formattedPaymentDate: this.formatDateOnly(displayDate), // Use same logic as table
       formattedGeneratedDate: this.formatDate(new Date()),
       notes: dto.notes || "Administrador",
       paymentMethod: paymentMethodLabel,
@@ -537,7 +546,7 @@ export class ReceiptService {
     const utcDate = new Date(raw.endsWith("Z") ? raw : `${raw}Z`)
     const zoned = utcToZonedTime(utcDate, timeZone)
 
-    return format(zoned, "dd 'de' MMMM 'de' yyyy, hh:mm aaaa", { timeZone })
+    return format(zoned, "dd 'de' MMMM 'de' yyyy, hh:mm aaaa", { timeZone, locale: es })
   }
 
   private formatDateOnly(dateInput: string | Date | null | undefined): string {
