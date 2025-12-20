@@ -63,4 +63,16 @@ export class FindExpenseFiltersDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsEnum(ExpenseCategory)
+  category?: ExpenseCategory;
+
+  @IsOptional()
+  @IsUUID()
+  providerId?: string;
 }

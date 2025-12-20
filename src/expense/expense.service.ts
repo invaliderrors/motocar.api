@@ -43,7 +43,7 @@ export class ExpenseService extends BaseStoreService {
   }
 
   async findAll(filters: FindExpenseFiltersDto, userStoreId: string | null): Promise<Expense[]> {
-    const { startDate, endDate } = filters;
+    const { startDate, endDate, search, category, providerId } = filters;
     const where: Prisma.ExpenseWhereInput = {
       ...this.storeFilter(userStoreId),
     };
@@ -57,6 +57,22 @@ export class ExpenseService extends BaseStoreService {
         const extendedEnd = addDays(new Date(endDate), 1);
         where.date.lte = toColombiaEndOfDayUtc(extendedEnd);
       }
+    }
+
+    if (search) {
+      where.OR = [
+        { beneficiary: { contains: search, mode: 'insensitive' } },
+        { reference: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (category) {
+      where.category = category;
+    }
+
+    if (providerId) {
+      where.providerId = providerId;
     }
 
     return this.prisma.expense.findMany({
