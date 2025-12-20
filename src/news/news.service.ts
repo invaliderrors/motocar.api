@@ -220,6 +220,9 @@ export class NewsService {
         recurringDay: dto.recurringDay,
         recurringMonths: dto.recurringMonths || [],
         skippedDates: skippedDates,
+        // Weekday skip configuration
+        skipWeekday: dto.skipWeekday,
+        applyToHistoricalLoans: dto.applyToHistoricalLoans ?? false,
         store: {
           connect: { id: dto.storeId },
         },
@@ -247,13 +250,22 @@ export class NewsService {
       // For loan-specific news, recalculate only that loan
       await this.recalculatePaidInstallments(dto.loanId);
     } else if (dto.type === NewsType.STORE_WIDE) {
-      // For store-wide news, recalculate all active loans in the store
+      // For store-wide news, recalculate loans based on applyToHistoricalLoans
+      const loansQuery: any = {
+        storeId: dto.storeId,
+        status: { not: 'COMPLETED' },
+        archived: false,
+      };
+
+      // If weekday skip and NOT applyToHistoricalLoans, only affect future loans
+      if (dto.skipWeekday !== undefined && dto.skipWeekday !== null && !dto.applyToHistoricalLoans) {
+        loansQuery.startDate = {
+          gte: new Date(dto.startDate),
+        };
+      }
+
       const affectedLoans = await this.prisma.loan.findMany({
-        where: {
-          storeId: dto.storeId,
-          status: { not: 'COMPLETED' },
-          archived: false,
-        },
+        where: loansQuery,
         select: { id: true },
       });
 
@@ -752,6 +764,8 @@ export class NewsService {
         isRecurring: true,
         recurringDay: true,
         recurringMonths: true,
+        skipWeekday: true,
+        applyToHistoricalLoans: true,
       },
     });
 
@@ -775,6 +789,8 @@ export class NewsService {
         isRecurring: true,
         recurringDay: true,
         recurringMonths: true,
+        skipWeekday: true,
+        applyToHistoricalLoans: true,
       },
     });
 
@@ -791,6 +807,47 @@ export class NewsService {
       // Add explicit skipped dates
       if (news.skippedDates && news.skippedDates.length > 0) {
         newsDates.push(...news.skippedDates);
+      }
+
+      // Generate weekday skip dates if applicable
+      if (news.skipWeekday !== null && news.skipWeekday !== undefined) {
+        const newsStartDate = new Date(news.startDate);
+        const loanStartDate = new Date(loan.startDate);
+        const today = new Date();
+        const endDate = new Date();
+        endDate.setMonth(endDate.getMonth() + 12); // Look ahead 12 months
+
+        // Determine effective start date based on applyToHistoricalLoans
+        let effectiveStartDate: Date;
+        if (news.applyToHistoricalLoans) {
+          // Apply to all loans: use the loan's start date
+          effectiveStartDate = loanStartDate;
+        } else {
+          // Only apply to future loans: use the news start date
+          // If loan started before news, skip this news for this loan
+          if (loanStartDate < newsStartDate) {
+            // This loan started before the news was created, skip it
+            continue;
+          }
+          effectiveStartDate = newsStartDate;
+        }
+
+        // Generate all dates matching the skipWeekday from effectiveStartDate to endDate
+        let currentDate = new Date(effectiveStartDate);
+        
+        // Move to the first occurrence of the target weekday
+        while (currentDate.getDay() !== news.skipWeekday) {
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+        
+        // Add all occurrences of this weekday
+        while (currentDate <= endDate) {
+          if (currentDate >= effectiveStartDate) {
+            newsDates.push(new Date(currentDate));
+          }
+          // Move to next week
+          currentDate.setDate(currentDate.getDate() + 7);
+        }
       }
 
       // Generate recurring dates if applicable
@@ -837,7 +894,7 @@ export class NewsService {
           title: news.title,
           category: news.category,
           dates: newsDates,
-          isRecurring: news.isRecurring,
+          isRecurring: news.isRecurring || (news.skipWeekday !== null && news.skipWeekday !== undefined),
         });
       }
     }

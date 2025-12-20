@@ -697,6 +697,10 @@ model News {
   // Specific dates to skip (for one-time closures or manually added dates)
   skippedDates             DateTime[] // Array of specific dates when store is closed
   
+  // Weekday skip configuration (for WEEKLY_SKIP category)
+  skipWeekday              Int?       // Day of week to skip (0=Sunday, 1=Monday, ..., 6=Saturday)
+  applyToHistoricalLoans   Boolean    @default(false) // If true, applies to all loans; if false, only to future loans
+  
   // Vehicle type filter (for STORE_WIDE news)
   vehicleType VehicleType? // If null, affects all vehicle types. If set, only affects specific type.
   
@@ -736,5 +740,6 @@ enum NewsCategory {
   DAY_OFF
   HOLIDAY
   SYSTEM_MAINTENANCE
+  WEEKLY_SKIP
   OTHER
 }

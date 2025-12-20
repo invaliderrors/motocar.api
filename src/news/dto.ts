@@ -14,6 +14,7 @@ export enum NewsCategory {
   DAY_OFF = 'DAY_OFF',
   HOLIDAY = 'HOLIDAY',
   SYSTEM_MAINTENANCE = 'SYSTEM_MAINTENANCE',
+  WEEKLY_SKIP = 'WEEKLY_SKIP',
   OTHER = 'OTHER',
 }
 
@@ -109,7 +110,16 @@ export class CreateNewsDto {
   @IsOptional()
   @IsDateString({}, { each: true })
   skippedDates?: string[];
-}
+  // Weekday skip configuration (for WEEKLY_SKIP category)
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(6)
+  skipWeekday?: number; // 0=Sunday, 1=Monday, ..., 6=Saturday
+
+  @IsBoolean()
+  @IsOptional()
+  applyToHistoricalLoans?: boolean;}
 
 export class UpdateNewsDto {
   @IsEnum(NewsType)
@@ -183,6 +193,17 @@ export class UpdateNewsDto {
   @IsOptional()
   @IsDateString({}, { each: true })
   skippedDates?: string[];
+
+  // Weekday skip configuration (for WEEKLY_SKIP category)
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(6)
+  skipWeekday?: number; // 0=Sunday, 1=Monday, ..., 6=Saturday
+
+  @IsBoolean()
+  @IsOptional()
+  applyToHistoricalLoans?: boolean;
 }
 
 export class QueryNewsDto {
