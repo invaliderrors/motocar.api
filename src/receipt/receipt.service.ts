@@ -14,14 +14,113 @@ export class ReceiptService {
     private readonly prisma: PrismaService
   ) { }
 
+  /**
+   * Enrich DTO with data from database if installmentId or receiptNumber is provided
+   * Maintains backward compatibility with frontend-calculated values
+   */
+  private async enrichDtoWithDatabaseData(dto: CreateReceiptDto): Promise<CreateReceiptDto> {
+    // Use installmentId or receiptNumber to fetch installment data
+    const installmentId = dto.installmentId || dto.receiptNumber;
+    
+    if (!installmentId) {
+      return dto; // No ID provided, use frontend data as-is
+    }
+
+    try {
+      const installment = await this.prisma.installment.findUnique({
+        where: { id: installmentId },
+        select: {
+          daysBehind: true,
+          daysAhead: true,
+          isUpToDate: true,
+          daysCoveredByPayment: true,
+          exactInstallmentsOwed: true,
+          remainingAmountOwed: true,
+          remainingAmountOwedAfter: true,
+          isLate: true,
+          isAdvance: true,
+          latePaymentDate: true,
+          advancePaymentDate: true,
+        },
+      });
+
+      if (!installment) {
+        console.log(`Installment ${installmentId} not found, using frontend data`);
+        return dto;
+      }
+
+      // Prefer database values over frontend values (database is source of truth)
+      // Only override if database value exists (not null/undefined)
+      const enrichedDto = { ...dto };
+
+      if (installment.daysBehind !== null && installment.daysBehind !== undefined) {
+        enrichedDto.daysBehind = installment.daysBehind;
+      }
+      if (installment.daysAhead !== null && installment.daysAhead !== undefined) {
+        enrichedDto.daysAhead = installment.daysAhead;
+      }
+      if (installment.isUpToDate !== null && installment.isUpToDate !== undefined) {
+        enrichedDto.isUpToDate = installment.isUpToDate;
+      }
+      if (installment.daysCoveredByPayment !== null && installment.daysCoveredByPayment !== undefined) {
+        // Store for potential future use
+        (enrichedDto as any).daysCoveredByPayment = installment.daysCoveredByPayment;
+      }
+      if (installment.exactInstallmentsOwed !== null && installment.exactInstallmentsOwed !== undefined) {
+        enrichedDto.exactInstallmentsOwed = installment.exactInstallmentsOwed;
+      }
+      if (installment.remainingAmountOwed !== null && installment.remainingAmountOwed !== undefined) {
+        enrichedDto.remainingAmountOwed = installment.remainingAmountOwed;
+      }
+      if (installment.remainingAmountOwedAfter !== null && installment.remainingAmountOwedAfter !== undefined) {
+        (enrichedDto as any).remainingAmountOwedAfter = installment.remainingAmountOwedAfter;
+      }
+      if (installment.isLate !== null && installment.isLate !== undefined) {
+        enrichedDto.isLate = installment.isLate;
+      }
+      if (installment.isAdvance !== null && installment.isAdvance !== undefined) {
+        enrichedDto.isAdvance = installment.isAdvance;
+      }
+      if (installment.latePaymentDate) {
+        enrichedDto.latePaymentDate = installment.latePaymentDate.toISOString();
+      }
+      if (installment.advancePaymentDate) {
+        enrichedDto.advancePaymentDate = installment.advancePaymentDate.toISOString();
+      }
+
+      console.log('Enriched DTO with database data:', {
+        installmentId,
+        daysBehind: enrichedDto.daysBehind,
+        daysAhead: enrichedDto.daysAhead,
+        isUpToDate: enrichedDto.isUpToDate,
+        hasExactOwed: !!enrichedDto.exactInstallmentsOwed,
+        exactInstallmentsOwed: enrichedDto.exactInstallmentsOwed,
+        remainingAmountOwed: enrichedDto.remainingAmountOwed,
+        storedFromDB: {
+          daysBehind: installment.daysBehind,
+          daysAhead: installment.daysAhead,
+          isUpToDate: installment.isUpToDate,
+        }
+      });
+
+      return enrichedDto;
+    } catch (error) {
+      console.error('Error fetching installment data:', error);
+      return dto; // Fall back to frontend data on error
+    }
+  }
+
   async generateReceipt(dto: any): Promise<Buffer> {
+    // Enrich DTO with database data if available
+    const enrichedDto = await this.enrichDtoWithDatabaseData(dto);
+
     const browser = await puppeteer.launch({
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     })
 
     const page = await browser.newPage()
-    const html = await this.fillTemplate(dto)
+    const html = await this.fillTemplate(enrichedDto)
 
     // Use 'load' instead of 'networkidle0' to avoid timeout issues with inline content
     await page.setContent(html, { 
@@ -41,12 +140,20 @@ export class ReceiptService {
   }
 
   private async fillTemplate(dto: CreateReceiptDto): Promise<string> {
+    console.log("=== RECEIPT GENERATION START ===");
     console.log("paymentDate en DTO:", dto.paymentDate);
     console.log("isLate:", dto.isLate);
     console.log("latePaymentDate:", dto.latePaymentDate);
     console.log("isAdvance:", dto.isAdvance);
     console.log("advancePaymentDate:", dto.advancePaymentDate);
     console.log("storeId received:", dto.storeId);
+    console.log("Stored status fields:", {
+      daysBehind: dto.daysBehind,
+      daysAhead: dto.daysAhead,
+      isUpToDate: dto.isUpToDate,
+      exactInstallmentsOwed: dto.exactInstallmentsOwed,
+      remainingAmountOwed: dto.remainingAmountOwed,
+    });
     
     // Fetch store information if storeId is provided
     let storeName = "MotoFácil";
@@ -145,15 +252,20 @@ export class ReceiptService {
     let saldoRestanteMoto = "";
     let saldoRestanteGps = "";
     
-    // Only show "cuotas restante" for late payments, showing days owed until today
-    if (paymentType === 'late' && daysSinceLastPayment !== null && daysSinceLastPayment > 0) {
-      // Use exact calculated values if provided, otherwise fall back to estimation
+    // Show "cuotas atrasadas" section - this shows debt BEFORE this payment
+    // PRIORITY 1: Use exactInstallmentsOwed and remainingAmountOwed (stored snapshot BEFORE payment)
+    // PRIORITY 2: Calculate from dates (old logic)
+    const shouldShowDebtSection = (dto.exactInstallmentsOwed !== undefined && dto.exactInstallmentsOwed > 0) || 
+                                   (paymentType === 'late' && daysSinceLastPayment !== null && daysSinceLastPayment > 0);
+    
+    if (shouldShowDebtSection) {
+      // Use exact calculated values if provided (BEFORE payment snapshot)
       let installmentsOwed = 0;
       let owedMotoDebt = 0;
       let owedGpsDebt = 0;
       
       if (dto.exactInstallmentsOwed !== undefined && dto.remainingAmountOwed !== undefined) {
-        // Use exact values from the API calculation
+        // Use exact values from the stored snapshot (debt BEFORE payment)
         installmentsOwed = dto.exactInstallmentsOwed;
         
         // Split remaining amount between base and GPS based on daily rates
@@ -165,8 +277,8 @@ export class ReceiptService {
           owedMotoDebt = (amountPerInstallment / totalPerInstallment) * dto.remainingAmountOwed;
           owedGpsDebt = (gpsPerInstallment / totalPerInstallment) * dto.remainingAmountOwed;
         }
-      } else {
-        // Fall back to old estimation logic
+      } else if (paymentType === 'late' && daysSinceLastPayment !== null) {
+        // Fall back to old estimation logic (calculate from dates)
         if (dto.paymentFrequency === 'DAILY') {
           installmentsOwed = daysSinceLastPayment;
         } else if (dto.paymentFrequency === 'WEEKLY') {
@@ -204,7 +316,60 @@ export class ReceiptService {
     let messageBottom = "";
     let advanceInfo = "";
     
-    if (paymentType === 'late' && daysSinceLastPayment !== null) {
+    // Check if we have stored status from database (new installments)
+    const hasStoredStatus = dto.daysBehind !== undefined || dto.daysAhead !== undefined || dto.isUpToDate !== undefined;
+    
+    if (hasStoredStatus && dto.isUpToDate) {
+      // Loan is exactly up to date after payment (stored status)
+      paymentTypeLabel = "PAGO AL DÍA";
+      paymentDaysStatus = "Estado: Al día (no debe nada)";
+      messageBottom = "¡Excelente! Mantienes tus pagos al día. Sigue así para alcanzar tu meta.";
+    } else if (hasStoredStatus && dto.daysAhead !== undefined && dto.daysAhead > 0) {
+      // Loan is ahead after payment (stored status)
+      paymentTypeLabel = "PAGO ADELANTADO";
+      const daysFormatted = dto.daysAhead.toFixed(1);
+      paymentDaysStatus = `Estado: ${daysFormatted} día${dto.daysAhead !== 1 ? 's' : ''} adelantado`;
+      
+      // Calculate installments covered for advance
+      if (dto.paymentFrequency === 'DAILY') {
+        installmentsInAdvance = dto.daysAhead;
+      } else if (dto.paymentFrequency === 'WEEKLY') {
+        installmentsInAdvance = Math.floor(dto.daysAhead / 7 * 10) / 10;
+      } else if (dto.paymentFrequency === 'BIWEEKLY') {
+        installmentsInAdvance = Math.floor(dto.daysAhead / 14 * 10) / 10;
+      } else if (dto.paymentFrequency === 'MONTHLY') {
+        installmentsInAdvance = Math.floor(dto.daysAhead / 30 * 10) / 10;
+      }
+      
+      if (installmentsInAdvance > 0) {
+        const installmentsFormatted = installmentsInAdvance % 1 === 0 
+          ? installmentsInAdvance.toString() 
+          : installmentsInAdvance.toFixed(1);
+        advanceInfo = `Cuotas adelantadas: ${installmentsFormatted}`;
+      }
+      
+      messageBottom = "¡Felicidades! Estás adelantado en tus pagos. Continúa así para estar cada vez más cerca de tu meta.";
+    } else if (hasStoredStatus && dto.daysBehind !== undefined && dto.daysBehind > 0) {
+      // Still behind after payment (stored status)
+      paymentTypeLabel = "PAGO ATRASADO";
+      
+      // Use stored amount owed AFTER payment, or calculate if not available
+      let totalOwed = 0;
+      if ((dto as any).remainingAmountOwedAfter !== undefined && (dto as any).remainingAmountOwedAfter !== null) {
+        // Use stored value directly (most accurate)
+        totalOwed = (dto as any).remainingAmountOwedAfter;
+      } else {
+        // Fallback: calculate from daysBehind using daily rates
+        const amountPerInstallment = dto.installmentPaymentAmmount ?? 0;
+        const gpsPerInstallment = 0; // We don't have the GPS daily rate in DTO, need to calculate from loan
+        totalOwed = dto.daysBehind * (amountPerInstallment + gpsPerInstallment);
+      }
+      
+      const daysFormatted = dto.daysBehind.toFixed(2);
+      paymentDaysStatus = `Estado: ${daysFormatted} día${dto.daysBehind !== 1 ? 's' : ''} atrasado - Debe ${this.formatCurrency(totalOwed, true)} para estar al día`;
+      messageBottom = "Recuerda mantener tus pagos al día para evitar cargos adicionales.";
+    } else if (paymentType === 'late' && daysSinceLastPayment !== null) {
+      // LEGACY: Fall back to old calculation for old installments
       // Check if there WAS debt BEFORE this payment (exactInstallmentsOwed)
       // If there was accumulated debt, it's a late payment even if they cleared it all
       const hadAccumulatedDebt = dto.exactInstallmentsOwed && dto.exactInstallmentsOwed > 0;

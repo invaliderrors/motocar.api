@@ -633,6 +633,21 @@ export class InstallmentService extends BaseStoreService {
     // Calculate exact debt BEFORE this payment
     const exactInstallmentsOwedBeforePayment = Math.max(0, daysOwedBeforePayment - totalDaysCoveredBeforePayment);
     const remainingAmountOwedBeforePayment = exactInstallmentsOwedBeforePayment * totalDailyRateForSnapshot;
+    
+    // Calculate payment status AFTER this payment is applied
+    const daysCoveredByThisPayment = totalPaymentAmount / totalDailyRate;
+    const totalDaysCoveredAfterPayment = totalDaysCoveredBeforePayment + daysCoveredByThisPayment;
+    
+    // Compare total coverage AFTER payment to days owed up to today
+    const netPosition = totalDaysCoveredAfterPayment - daysOwedBeforePayment;
+    
+    // Split into separate behind/ahead values (one will be 0)
+    const daysBehindAfterPayment = netPosition < 0 ? Math.abs(netPosition) : 0;
+    const daysAheadAfterPayment = netPosition > 0 ? netPosition : 0;
+    const isUpToDate = Math.abs(netPosition) < 0.01; // Within 0.01 days is considered "up to date"
+    
+    // Calculate remaining amount owed AFTER payment in currency
+    const remainingAmountOwedAfterPayment = daysBehindAfterPayment * totalDailyRateForSnapshot;
 
     const installment = await this.prisma.installment.create({
       data: {
@@ -651,6 +666,12 @@ export class InstallmentService extends BaseStoreService {
         // Store debt snapshot - IMMUTABLE after creation
         exactInstallmentsOwed: exactInstallmentsOwedBeforePayment,
         remainingAmountOwed: remainingAmountOwedBeforePayment,
+        // Store payment status AFTER payment - For receipt generation
+        daysBehind: daysBehindAfterPayment,
+        daysAhead: daysAheadAfterPayment,
+        isUpToDate: isUpToDate,
+        daysCoveredByPayment: daysCoveredByThisPayment,
+        remainingAmountOwedAfter: remainingAmountOwedAfterPayment,
         createdAt: toColombiaUtc(new Date()),
         updatedAt: toColombiaUtc(new Date()),
         createdBy: dto.createdById ? { connect: { id: dto.createdById } } : undefined,

@@ -107,6 +107,18 @@ export class CreateReceiptDto {
   @IsNumber()
   @IsOptional()
   remainingAmountOwed?: number; // Exact remaining amount owed in currency
+
+  @IsString()
+  @IsOptional()
+  installmentId?: string; // ID to fetch installment data from database
+
+  @IsBoolean()
+  @IsOptional()
+  isUpToDate?: boolean; // Loan is exactly current after payment
+
+  @IsNumber()
+  @IsOptional()
+  remainingAmountOwedAfter?: number; // Exact amount owed AFTER this payment
 }
 
 export class SendReceiptWhatsappDto {

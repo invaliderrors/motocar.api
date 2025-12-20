@@ -237,6 +237,13 @@ model Installment {
   // Debt snapshot at the time of payment creation - IMMUTABLE after creation
   exactInstallmentsOwed Float?      // Exact installments owed BEFORE this payment (e.g., 1.87)
   remainingAmountOwed   Float?      // Exact amount owed BEFORE this payment in currency
+  
+  // Payment status AFTER payment is applied - For receipt generation
+  daysBehind            Float?      // Days behind AFTER this payment (0 if caught up or ahead)
+  daysAhead             Float?      // Days ahead AFTER this payment (0 if behind or exactly current)
+  isUpToDate            Boolean     @default(false) // Loan is exactly current after payment (owes exactly 0 days)
+  daysCoveredByPayment  Float?      // Number of days this specific payment covers
+  remainingAmountOwedAfter Float?   // Exact amount owed AFTER this payment in currency
 
   // Relaciones
   createdBy      Employee?     @relation(fields: [createdById], references: [id])
