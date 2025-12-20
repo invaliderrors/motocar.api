@@ -19,6 +19,7 @@ import type {
   Loan, 
   Employee, 
   Provider, 
+  Store,
   User, 
   Vehicle, 
   Installment, 
@@ -39,6 +40,7 @@ type CashRegisterWithRelations = CashRegister & {
   })[]
   createdBy: Pick<Employee, "id" | "username" | "name"> | null
   provider: Pick<Provider, "id" | "name">
+  store: Pick<Store, "id" | "name">
   denominationCount: {
     bills_100000: number
     bills_50000: number
@@ -634,6 +636,9 @@ export class ClosingService extends BaseStoreService {
         ...this.storeFilter(userStoreId),
       },
       include: {
+        store: {
+          select: { id: true, name: true },
+        },
         provider: {
           select: { id: true, name: true },
         },
@@ -720,7 +725,7 @@ export class ClosingService extends BaseStoreService {
     const html = this.fillTemplate({
       id: closing.id,
       date: closing.date,
-      provider: closing.provider.name,
+      storeName: closing.store.name,
       cashInRegister: closing.cashInRegister,
       cashFromTransfers: closing.cashFromTransfers,
       cashFromCards: closing.cashFromCards,
@@ -767,7 +772,7 @@ export class ClosingService extends BaseStoreService {
   private fillTemplate(data: {
     id: string;
     date: Date;
-    provider: string;
+    storeName: string;
     cashInRegister: number;
     cashFromTransfers: number;
     cashFromCards: number;
@@ -796,7 +801,7 @@ export class ClosingService extends BaseStoreService {
       formattedTotalGpsPayments: this.formatCurrency(data.totalGpsPayments),
       formattedTotalExpenses: this.formatCurrency(data.totalExpenses),
       formattedBalance: this.formatCurrency(data.balance),
-      provider: data.provider,
+      storeName: data.storeName,
       formattedCashInRegister: this.formatCurrency(data.cashInRegister),
       formattedCashFromTransfers: this.formatCurrency(data.cashFromTransfers),
       formattedCashFromCards: this.formatCurrency(data.cashFromCards),
@@ -811,7 +816,7 @@ export class ClosingService extends BaseStoreService {
 
     let result = templateHtml
       .replace(/{{id}}/g, formattedData.id)
-      .replace(/{{provider}}/g, formattedData.provider)
+      .replace(/{{storeName}}/g, formattedData.storeName)
       .replace(/{{formattedDate}}/g, formattedData.formattedDate)
       .replace(/{{formattedGeneratedDate}}/g, formattedData.formattedGeneratedDate)
       .replace(/{{createdBy}}/g, formattedData.createdBy)

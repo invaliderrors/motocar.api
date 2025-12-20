@@ -148,8 +148,7 @@ export const templateHtml = `
 <body>
   <div class="closing-report">
     <div class="header">
-      <img class="logo" src="https://i.imgur.com/vxqGDAf.png" alt="Logo">
-      <div class="title">CIERRE DE CAJA {{provider}}</div>
+      <div class="title">CIERRE DE CAJA {{storeName}}</div>
       <div class="info">Cierre ID: {{id}}</div>
       <div><span class="label">Fecha:</span> {{formattedDate}}</div>
       <div><span class="label">Generado:</span> {{formattedGeneratedDate}}</div>
@@ -226,26 +225,6 @@ export const templateHtml = `
       <div class="expense-categories">
         {{expenseCategories}}
       </div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">Detalle de Pagos</div>
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Cliente</th>
-            <th>Placa</th>
-            <th>Fecha</th>
-            <th>Método</th>
-            <th class="right">Vehículo</th>
-            <th class="right">GPS</th>
-            <th class="right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{paymentRows}}
-        </tbody>
-      </table>
     </div>
 
     <div class="section">
