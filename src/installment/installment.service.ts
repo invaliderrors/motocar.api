@@ -625,10 +625,14 @@ export class InstallmentService extends BaseStoreService {
     }
     
     // Calculate days owed from start to today
+    // IMPORTANT: We count days from start up to (but NOT including) today
+    // because if someone pays on Dec 22, they haven't yet incurred the debt for Dec 22
+    // They owe for all days BEFORE today, not including today
     const loanStartDate = startOfDay(toColombiaUtc(new Date(loan.startDate)));
-    const logicalDaysFromStartToToday = this.getLogicalDaysDifference(loanStartDate, today);
-    const skippedFromStartToToday = this.countSkippedDatesInRange(loanStartDate, today, skippedDates);
-    const daysOwedBeforePayment = logicalDaysFromStartToToday - skippedFromStartToToday;
+    const yesterday = addDays(today, -1);
+    const logicalDaysFromStartToYesterday = this.getLogicalDaysDifference(loanStartDate, yesterday);
+    const skippedFromStartToYesterday = this.countSkippedDatesInRange(loanStartDate, yesterday, skippedDates);
+    const daysOwedBeforePayment = logicalDaysFromStartToYesterday - skippedFromStartToYesterday;
     
     // Calculate exact debt BEFORE this payment
     const exactInstallmentsOwedBeforePayment = Math.max(0, daysOwedBeforePayment - totalDaysCoveredBeforePayment);
